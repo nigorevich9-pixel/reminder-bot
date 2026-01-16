@@ -39,13 +39,3 @@ htmlcov/
 # Build
 dist/
 build/
-
-# ================================
-# JIRA INTEGRATION (separate PR)
-# ================================
-# Uncomment these lines when merging Jira feature branch:
-app/bot/jira_handlers.py
-app/services/jira_service.py
-app/repositories/jira_repository.py
-app/worker/jira_worker.py
-alembic/versions/*jira*.py
