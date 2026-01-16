@@ -1,14 +1,14 @@
 """Jira polling worker - checks for updates and sends notifications."""
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import settings
 from app.db import AsyncSessionLocal
-from app.models import User
 from app.repositories.jira_repository import JiraRepository
 from app.services.jira_service import JiraService, format_issue_update
 
@@ -16,7 +16,11 @@ from app.services.jira_service import JiraService, format_issue_update
 logger = logging.getLogger("jira_worker")
 
 
-async def check_jira_updates(session: AsyncSession, bot: Bot) -> int:
+async def check_jira_updates(
+    session: AsyncSession,
+    bot: Bot,
+    lookback_minutes: int,
+) -> int:
     """Check for Jira updates and notify subscribers."""
     repo = JiraRepository(session)
     
@@ -29,10 +33,10 @@ async def check_jira_updates(session: AsyncSession, bot: Bot) -> int:
     notified = 0
     
     # Check each project
-    poll_minutes = max(settings.jira_poll_seconds // 60 + 1, 3)  # At least 3 minutes lookback
-    
+    lookback_minutes = max(lookback_minutes, 3)  # At least 3 minutes lookback
+
     try:
-        issues = await jira.get_recently_updated_issues(projects, minutes=poll_minutes)
+        issues = await jira.get_recently_updated_issues(projects, minutes=lookback_minutes)
     except Exception as e:
         logger.error("Failed to fetch Jira updates: %s", e)
         return 0
@@ -57,7 +61,7 @@ async def check_jira_updates(session: AsyncSession, bot: Bot) -> int:
         
         # Get changelog for more details (optional, can be slow)
         try:
-            since = datetime.now(timezone.utc) - timedelta(minutes=poll_minutes)
+            since = datetime.now(timezone.utc) - timedelta(minutes=lookback_minutes)
             changes = await jira.get_issue_changelog(key, since=since)
         except Exception:
             changes = None
@@ -82,6 +86,17 @@ async def check_jira_updates(session: AsyncSession, bot: Bot) -> int:
     return notified
 
 
+def _seconds_until_next_run(now_local: datetime) -> int:
+    """Sleep until next allowed polling window (09:00 local)."""
+    next_day = now_local
+    if now_local.hour >= 19:
+        next_day = now_local + timedelta(days=1)
+    target = datetime.combine(next_day.date(), time(9, 0), tzinfo=now_local.tzinfo)
+    if target <= now_local:
+        target = target + timedelta(days=1)
+    return max(int((target - now_local).total_seconds()), 60)
+
+
 async def run_jira_loop() -> None:
     """Main loop for Jira polling."""
     if not settings.tg_token:
@@ -102,18 +117,44 @@ async def run_jira_loop() -> None:
     
     bot = Bot(token=settings.tg_token)
     poll_seconds = settings.jira_poll_seconds
-    
+    tz = ZoneInfo(settings.default_timezone)
+    last_catchup_date: datetime.date | None = None
+
     logger.info("Jira worker started, polling every %d seconds", poll_seconds)
-    
+
     while True:
+        now_local = datetime.now(tz)
+        # Stop polling after 19:00, resume at 09:00 next day
+        if now_local.hour >= 19 or now_local.hour < 9:
+            sleep_seconds = _seconds_until_next_run(now_local)
+            logger.info(
+                "Outside working hours (09:00-19:00). Sleeping for %ds",
+                sleep_seconds,
+            )
+            await asyncio.sleep(sleep_seconds)
+            continue
+
+        # Morning catch-up: check changes from 19:00 yesterday to 09:00 today
+        if last_catchup_date != now_local.date():
+            catchup_minutes = 14 * 60  # 19:00 -> 09:00 = 14 hours
+            async with AsyncSessionLocal() as session:
+                try:
+                    notified = await check_jira_updates(session, bot, catchup_minutes)
+                    if notified:
+                        logger.info("Sent %d Jira notifications (morning catch-up)", notified)
+                except Exception as e:
+                    logger.exception("Jira worker error (catch-up): %s", e)
+            last_catchup_date = now_local.date()
+
         async with AsyncSessionLocal() as session:
             try:
-                notified = await check_jira_updates(session, bot)
+                lookback_minutes = max(poll_seconds // 60 + 1, 3)
+                notified = await check_jira_updates(session, bot, lookback_minutes)
                 if notified:
                     logger.info("Sent %d Jira notifications", notified)
             except Exception as e:
                 logger.exception("Jira worker error: %s", e)
-        
+
         await asyncio.sleep(poll_seconds)
 
 
