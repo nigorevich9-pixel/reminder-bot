@@ -156,6 +156,8 @@ async def start_handler(message: Message, session: AsyncSession):
         "/list30 — уведомления на 30 дней\n"
         "/new — создать уведомление\n"
         "/edit — редактировать уведомление\n"
+        "/disable — отключить уведомление\n"
+        "/delete — удалить уведомление\n"
         "/cancel — отменить создание"
     )
 
@@ -209,6 +211,40 @@ async def edit_handler(message: Message, state: FSMContext):
         "Введите номер уведомления для редактирования (например, 12):",
         reply_markup=ReplyKeyboardRemove(),
     )
+
+
+@router.message(Command("disable"))
+async def disable_handler(message: Message, session: AsyncSession):
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2 or not args[1].strip().isdigit():
+        await message.answer("Использование: /disable <id>")
+        return
+    reminder_id = int(args[1].strip())
+    user = await _get_or_create_user(session, message)
+    service = ReminderService(ReminderRepository(session))
+    reminder = await service.get_by_id_for_user(reminder_id, user.id)
+    if not reminder:
+        await message.answer("Уведомление не найдено или не принадлежит тебе.")
+        return
+    await service.mark_done(reminder)
+    await message.answer(f"Уведомление #{reminder.id} отключено (status=done).")
+
+
+@router.message(Command("delete"))
+async def delete_handler(message: Message, session: AsyncSession):
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2 or not args[1].strip().isdigit():
+        await message.answer("Использование: /delete <id>")
+        return
+    reminder_id = int(args[1].strip())
+    user = await _get_or_create_user(session, message)
+    service = ReminderService(ReminderRepository(session))
+    reminder = await service.get_by_id_for_user(reminder_id, user.id)
+    if not reminder:
+        await message.answer("Уведомление не найдено или не принадлежит тебе.")
+        return
+    await service.delete(reminder)
+    await message.answer(f"Уведомление #{reminder_id} удалено.")
 
 
 @router.message(NewReminderStates.title)

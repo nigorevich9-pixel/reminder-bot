@@ -63,3 +63,9 @@ class ReminderService:
             timezone=timezone,
             next_run_at=next_run_at,
         )
+
+    async def mark_done(self, reminder):
+        return await self._repo.mark_done(reminder)
+
+    async def delete(self, reminder):
+        await self._repo.delete(reminder)

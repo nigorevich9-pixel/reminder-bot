@@ -74,6 +74,14 @@ class ReminderRepository:
         reminder.status = "active"
         return reminder
 
+    async def mark_done(self, reminder: Reminder) -> Reminder:
+        reminder.status = "done"
+        reminder.next_run_at = None
+        return reminder
+
+    async def delete(self, reminder: Reminder) -> None:
+        await self._session.delete(reminder)
+
     async def create(
         self,
         *,
