@@ -37,3 +37,29 @@ class ReminderService:
             timezone=timezone,
             next_run_at=next_run_at,
         )
+
+    async def get_by_id_for_user(self, reminder_id: int, user_id: int):
+        return await self._repo.get_by_id_for_user(reminder_id, user_id)
+
+    async def update(
+        self,
+        *,
+        reminder,
+        title: str,
+        message: str | None,
+        reminder_type: str,
+        run_at: datetime | None,
+        cron_expr: str | None,
+        timezone: str,
+    ):
+        next_run_at = compute_next_run_at(reminder_type, run_at, timezone, cron_expr)
+        return await self._repo.update(
+            reminder,
+            title=title,
+            message=message,
+            reminder_type=reminder_type,
+            run_at=run_at,
+            cron_expr=cron_expr,
+            timezone=timezone,
+            next_run_at=next_run_at,
+        )

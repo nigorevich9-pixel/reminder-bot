@@ -44,6 +44,36 @@ class ReminderRepository:
         )
         return list(result.scalars().all())
 
+    async def get_by_id_for_user(self, reminder_id: int, user_id: int) -> Reminder | None:
+        result = await self._session.execute(
+            select(Reminder).where(
+                Reminder.id == reminder_id, Reminder.user_id == user_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def update(
+        self,
+        reminder: Reminder,
+        *,
+        title: str,
+        message: str | None,
+        reminder_type: str,
+        run_at: datetime | None,
+        cron_expr: str | None,
+        timezone: str,
+        next_run_at: datetime | None,
+    ) -> Reminder:
+        reminder.title = title
+        reminder.message = message
+        reminder.reminder_type = reminder_type
+        reminder.run_at = run_at
+        reminder.cron_expr = cron_expr
+        reminder.timezone = timezone
+        reminder.next_run_at = next_run_at
+        reminder.status = "active"
+        return reminder
+
     async def create(
         self,
         *,

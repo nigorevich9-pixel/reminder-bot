@@ -8,3 +8,13 @@ class NewReminderStates(StatesGroup):
     date_value = State()
     time_value = State()
     cron_expr = State()
+
+
+class EditReminderStates(StatesGroup):
+    reminder_id = State()
+    title = State()
+    reminder_type = State()
+    day_choice = State()
+    date_value = State()
+    time_value = State()
+    cron_expr = State()

@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.states import NewReminderStates
+from app.bot.states import EditReminderStates, NewReminderStates
 from app.config.settings import settings
 from app.repositories.reminder_repository import ReminderRepository
 from app.repositories.user_repository import UserRepository
@@ -155,6 +155,7 @@ async def start_handler(message: Message, session: AsyncSession):
         "/list14 — уведомления на 14 дней\n"
         "/list30 — уведомления на 30 дней\n"
         "/new — создать уведомление\n"
+        "/edit — редактировать уведомление\n"
         "/cancel — отменить создание"
     )
 
@@ -200,6 +201,16 @@ async def new_handler(message: Message, state: FSMContext):
     await message.answer("Название уведомления:", reply_markup=ReplyKeyboardRemove())
 
 
+@router.message(Command("edit"))
+async def edit_handler(message: Message, state: FSMContext):
+    await state.clear()
+    await state.set_state(EditReminderStates.reminder_id)
+    await message.answer(
+        "Введите номер уведомления для редактирования (например, 12):",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+
 @router.message(NewReminderStates.title)
 async def new_title_handler(message: Message, state: FSMContext):
     title = (message.text or "").strip()
@@ -208,6 +219,48 @@ async def new_title_handler(message: Message, state: FSMContext):
         return
     await state.update_data(title=title)
     await state.set_state(NewReminderStates.reminder_type)
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Разово"), KeyboardButton(text="Ежедневно")],
+            [KeyboardButton(text="Еженедельно"), KeyboardButton(text="Ежемесячно")],
+            [KeyboardButton(text="Cron")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+    await message.answer("Тип уведомления:", reply_markup=keyboard)
+
+
+@router.message(EditReminderStates.reminder_id)
+async def edit_id_handler(message: Message, state: FSMContext, session: AsyncSession):
+    raw = (message.text or "").strip()
+    if not raw.isdigit():
+        await message.answer("Нужен числовой ID уведомления.")
+        return
+    reminder_id = int(raw)
+    user = await _get_or_create_user(session, message)
+    reminder = await ReminderService(ReminderRepository(session)).get_by_id_for_user(
+        reminder_id, user.id
+    )
+    if not reminder:
+        await message.answer("Уведомление не найдено или не принадлежит тебе.")
+        return
+    await state.update_data(reminder_id=reminder_id)
+    await state.set_state(EditReminderStates.title)
+    await message.answer(
+        f"Новое название (сейчас: {reminder.title}):",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+
+@router.message(EditReminderStates.title)
+async def edit_title_handler(message: Message, state: FSMContext):
+    title = (message.text or "").strip()
+    if not title:
+        await message.answer("Название не может быть пустым.")
+        return
+    await state.update_data(title=title)
+    await state.set_state(EditReminderStates.reminder_type)
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Разово"), KeyboardButton(text="Ежедневно")],
@@ -255,6 +308,41 @@ async def new_type_handler(message: Message, state: FSMContext):
         await message.answer("Когда напомнить?", reply_markup=keyboard)
 
 
+@router.message(EditReminderStates.reminder_type)
+async def edit_type_handler(message: Message, state: FSMContext):
+    raw = (message.text or "").strip()
+    reminder_type = TYPE_OPTIONS.get(raw) or raw.lower()
+    if reminder_type not in {"one_time", "daily", "weekly", "monthly", "cron"}:
+        await message.answer("Неверный тип. Выбери из кнопок.")
+        return
+    await state.update_data(reminder_type=reminder_type)
+    if reminder_type == "cron":
+        await state.set_state(EditReminderStates.cron_expr)
+        await message.answer(
+            "Cron: минуты → часы → день_месяца → месяц → день_недели.\n"
+            "Примеры (ежедневные):\n"
+            "• Каждый день в 09:00 — `0 9 * * *`\n"
+            "• По будням в 18:30 — `30 18 * * 1-5`\n"
+            "• Со вторника по четверг в 10:00 — `0 10 * * 2-4`\n"
+            "• Каждые 2 часа — `0 */2 * * *`\n"
+            "Примеры (ежемесячные):\n"
+            "• 1‑го числа в 09:00 — `0 9 1 * *`\n"
+            "• 15‑го числа в 09:00 — `0 9 15 * *`",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    else:
+        await state.set_state(EditReminderStates.day_choice)
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")],
+                [KeyboardButton(text="Другая дата")],
+            ],
+            resize_keyboard=True,
+            one_time_keyboard=True,
+        )
+        await message.answer("Когда напомнить?", reply_markup=keyboard)
+
+
 @router.message(NewReminderStates.day_choice)
 async def new_day_choice_handler(message: Message, state: FSMContext):
     raw = (message.text or "").strip()
@@ -275,6 +363,26 @@ async def new_day_choice_handler(message: Message, state: FSMContext):
     await message.answer("Выбери время или введи вручную:", reply_markup=_time_keyboard())
 
 
+@router.message(EditReminderStates.day_choice)
+async def edit_day_choice_handler(message: Message, state: FSMContext):
+    raw = (message.text or "").strip()
+    if raw not in DAY_OPTIONS:
+        await message.answer("Выбери из кнопок.")
+        return
+    offset = DAY_OPTIONS[raw]
+    if offset is None:
+        await state.set_state(EditReminderStates.date_value)
+        await message.answer("Дата (DD-MM-YYYY):", reply_markup=ReplyKeyboardRemove())
+        return
+    target_date = date.today() + timedelta(days=offset)
+    await state.update_data(
+        date_value=target_date.strftime("%Y-%m-%d"),
+        day_offset=offset,
+    )
+    await state.set_state(EditReminderStates.time_value)
+    await message.answer("Выбери время или введи вручную:", reply_markup=_time_keyboard())
+
+
 @router.message(NewReminderStates.date_value)
 async def new_date_handler(message: Message, state: FSMContext):
     raw = (message.text or "").strip()
@@ -286,6 +394,20 @@ async def new_date_handler(message: Message, state: FSMContext):
     await state.update_data(date_value=raw)
     await state.update_data(day_offset=None)
     await state.set_state(NewReminderStates.time_value)
+    await message.answer("Выбери время или введи вручную:", reply_markup=_time_keyboard())
+
+
+@router.message(EditReminderStates.date_value)
+async def edit_date_handler(message: Message, state: FSMContext):
+    raw = (message.text or "").strip()
+    try:
+        parse_user_date(raw)
+    except ValueError:
+        await message.answer("Неверный формат. Пример: 20-01-2026 или 20 01 2026")
+        return
+    await state.update_data(date_value=raw)
+    await state.update_data(day_offset=None)
+    await state.set_state(EditReminderStates.time_value)
     await message.answer("Выбери время или введи вручную:", reply_markup=_time_keyboard())
 
 
@@ -351,6 +473,77 @@ async def new_time_handler(message: Message, state: FSMContext, session: AsyncSe
     )
 
 
+@router.message(EditReminderStates.time_value)
+async def edit_time_handler(message: Message, state: FSMContext, session: AsyncSession):
+    data = await state.get_data()
+    tz_name = settings.default_timezone
+    raw = (message.text or "").strip()
+    if raw in DAY_OPTIONS:
+        offset = DAY_OPTIONS[raw]
+        if offset is None:
+            await state.set_state(EditReminderStates.date_value)
+            await message.answer("Дата (DD-MM-YYYY):", reply_markup=ReplyKeyboardRemove())
+            return
+        target_date = date.today() + timedelta(days=offset)
+        await state.update_data(date_value=target_date.strftime("%Y-%m-%d"))
+        await message.answer("Выбери время или введи вручную:", reply_markup=_time_keyboard())
+        return
+    if raw == "Ввести время":
+        await message.answer("Время (HH:MM) или 'H M':", reply_markup=ReplyKeyboardRemove())
+        return
+    if raw in TIME_PRESETS:
+        tz = ZoneInfo(tz_name)
+        base_time = (datetime.now(tz) + TIME_PRESETS[raw]).time()
+        date_value = data.get("date_value")
+        if not date_value:
+            await message.answer("Сначала выбери дату.")
+            return
+        target_date = parse_user_date(date_value)
+        run_local = datetime.combine(target_date, base_time).replace(tzinfo=tz)
+        run_at = run_local.astimezone(timezone.utc)
+    elif raw in FIXED_TIME_OPTIONS:
+        tz = ZoneInfo(tz_name)
+        date_value = data.get("date_value")
+        if not date_value:
+            await message.answer("Сначала выбери дату.")
+            return
+        target_date = parse_user_date(date_value)
+        hour, minute = FIXED_TIME_OPTIONS[raw]
+        run_local = datetime.combine(target_date, datetime.min.time()).replace(tzinfo=tz)
+        run_local = run_local.replace(hour=hour, minute=minute)
+        run_at = run_local.astimezone(timezone.utc)
+    else:
+        try:
+            run_at = build_user_datetime(data["date_value"], raw, tz_name)
+        except ValueError:
+            await message.answer("Неверный формат времени. Пример: 09:30 или 9 30")
+            return
+
+    user = await _get_or_create_user(session, message)
+    reminder = await ReminderService(ReminderRepository(session)).get_by_id_for_user(
+        data["reminder_id"], user.id
+    )
+    if not reminder:
+        await state.clear()
+        await message.answer("Уведомление не найдено или не принадлежит тебе.")
+        return
+
+    reminder = await ReminderService(ReminderRepository(session)).update(
+        reminder=reminder,
+        title=data["title"],
+        message=data["title"],
+        reminder_type=data["reminder_type"],
+        run_at=run_at,
+        cron_expr=None,
+        timezone=tz_name,
+    )
+    await state.clear()
+    await message.answer(
+        f"Обновлено уведомление #{reminder.id} на {format_user_datetime(reminder.next_run_at, tz_name)}",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+
 @router.message(NewReminderStates.cron_expr)
 async def new_cron_handler(message: Message, state: FSMContext, session: AsyncSession):
     data = await state.get_data()
@@ -375,4 +568,39 @@ async def new_cron_handler(message: Message, state: FSMContext, session: AsyncSe
     await state.clear()
     await message.answer(
         f"Создано уведомление #{reminder.id} на {format_user_datetime(reminder.next_run_at, tz_name)}"
+    )
+
+
+@router.message(EditReminderStates.cron_expr)
+async def edit_cron_handler(message: Message, state: FSMContext, session: AsyncSession):
+    data = await state.get_data()
+    tz_name = settings.default_timezone
+    cron_expr = (message.text or "").strip()
+    if not cron_expr:
+        await message.answer("Cron выражение не может быть пустым.")
+        return
+    try:
+        user = await _get_or_create_user(session, message)
+        reminder = await ReminderService(ReminderRepository(session)).get_by_id_for_user(
+            data["reminder_id"], user.id
+        )
+        if not reminder:
+            await state.clear()
+            await message.answer("Уведомление не найдено или не принадлежит тебе.")
+            return
+        reminder = await ReminderService(ReminderRepository(session)).update(
+            reminder=reminder,
+            title=data["title"],
+            message=data["title"],
+            reminder_type="cron",
+            run_at=None,
+            cron_expr=cron_expr,
+            timezone=tz_name,
+        )
+    except Exception:
+        await message.answer("Не удалось разобрать cron. Пример: 0 9 * * *")
+        return
+    await state.clear()
+    await message.answer(
+        f"Обновлено уведомление #{reminder.id} на {format_user_datetime(reminder.next_run_at, tz_name)}"
     )
