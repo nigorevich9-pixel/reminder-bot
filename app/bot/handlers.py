@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.states import EditReminderStates, NewReminderStates
+from app.bot.states import DeleteReminderStates, EditReminderStates, NewReminderStates
 from app.config.settings import settings
 from app.repositories.reminder_repository import ReminderRepository
 from app.repositories.user_repository import UserRepository
@@ -125,9 +125,12 @@ def _format_reminders(reminders) -> str:
 def _time_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="09:00"), KeyboardButton(text="12:00"), KeyboardButton(text="18:00")],
-            [KeyboardButton(text="Через 1 минуту"), KeyboardButton(text="Через 10 минут")],
-            [KeyboardButton(text="Через 1 час"), KeyboardButton(text="Ввести время")],
+            [KeyboardButton(text="09:00"), KeyboardButton(
+                text="12:00"), KeyboardButton(text="18:00")],
+            [KeyboardButton(text="Через 1 минуту"),
+             KeyboardButton(text="Через 10 минут")],
+            [KeyboardButton(text="Через 1 час"),
+             KeyboardButton(text="Ввести время")],
         ],
         resize_keyboard=True,
         one_time_keyboard=True,
@@ -231,10 +234,15 @@ async def disable_handler(message: Message, session: AsyncSession):
 
 
 @router.message(Command("delete"))
-async def delete_handler(message: Message, session: AsyncSession):
+async def delete_handler(message: Message, state: FSMContext, session: AsyncSession):
     args = (message.text or "").split(maxsplit=1)
-    if len(args) < 2 or not args[1].strip().isdigit():
-        await message.answer("Использование: /delete <id>")
+    if len(args) < 2:
+        # Ask for ID in next message
+        await message.answer("Введите ID уведомления для удаления:")
+        await state.set_state(DeleteReminderStates.reminder_id)
+        return
+    if not args[1].strip().isdigit():
+        await message.answer("Использование: /delete <id> или отправь id в следующем сообщении")
         return
     reminder_id = int(args[1].strip())
     user = await _get_or_create_user(session, message)
@@ -244,6 +252,24 @@ async def delete_handler(message: Message, session: AsyncSession):
         await message.answer("Уведомление не найдено или не принадлежит тебе.")
         return
     await service.delete(reminder)
+    await message.answer(f"Уведомление #{reminder_id} удалено.")
+
+
+@router.message(DeleteReminderStates.reminder_id)
+async def delete_id_handler(message: Message, state: FSMContext, session: AsyncSession):
+    raw = (message.text or "").strip()
+    if not raw.isdigit():
+        await message.answer("Нужен числовой ID уведомления.")
+        return
+    reminder_id = int(raw)
+    user = await _get_or_create_user(session, message)
+    service = ReminderService(ReminderRepository(session))
+    reminder = await service.get_by_id_for_user(reminder_id, user.id)
+    if not reminder:
+        await message.answer("Уведомление не найдено или не принадлежит тебе.")
+        return
+    await service.delete(reminder)
+    await state.clear()
     await message.answer(f"Уведомление #{reminder_id} удалено.")
 
 
@@ -258,7 +284,8 @@ async def new_title_handler(message: Message, state: FSMContext):
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Разово"), KeyboardButton(text="Ежедневно")],
-            [KeyboardButton(text="Еженедельно"), KeyboardButton(text="Ежемесячно")],
+            [KeyboardButton(text="Еженедельно"),
+             KeyboardButton(text="Ежемесячно")],
             [KeyboardButton(text="Cron")],
         ],
         resize_keyboard=True,
@@ -300,7 +327,8 @@ async def edit_title_handler(message: Message, state: FSMContext):
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Разово"), KeyboardButton(text="Ежедневно")],
-            [KeyboardButton(text="Еженедельно"), KeyboardButton(text="Ежемесячно")],
+            [KeyboardButton(text="Еженедельно"),
+             KeyboardButton(text="Ежемесячно")],
             [KeyboardButton(text="Cron")],
         ],
         resize_keyboard=True,
@@ -335,7 +363,8 @@ async def new_type_handler(message: Message, state: FSMContext):
         await state.set_state(NewReminderStates.day_choice)
         keyboard = ReplyKeyboardMarkup(
             keyboard=[
-                [KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")],
+                [KeyboardButton(text="Сегодня"),
+                 KeyboardButton(text="Завтра")],
                 [KeyboardButton(text="Другая дата")],
             ],
             resize_keyboard=True,
@@ -370,7 +399,8 @@ async def edit_type_handler(message: Message, state: FSMContext):
         await state.set_state(EditReminderStates.day_choice)
         keyboard = ReplyKeyboardMarkup(
             keyboard=[
-                [KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")],
+                [KeyboardButton(text="Сегодня"),
+                 KeyboardButton(text="Завтра")],
                 [KeyboardButton(text="Другая дата")],
             ],
             resize_keyboard=True,
@@ -483,7 +513,8 @@ async def new_time_handler(message: Message, state: FSMContext, session: AsyncSe
             return
         target_date = parse_user_date(date_value)
         hour, minute = FIXED_TIME_OPTIONS[raw]
-        run_local = datetime.combine(target_date, datetime.min.time()).replace(tzinfo=tz)
+        run_local = datetime.combine(
+            target_date, datetime.min.time()).replace(tzinfo=tz)
         run_local = run_local.replace(hour=hour, minute=minute)
         run_at = run_local.astimezone(timezone.utc)
     else:
@@ -545,7 +576,8 @@ async def edit_time_handler(message: Message, state: FSMContext, session: AsyncS
             return
         target_date = parse_user_date(date_value)
         hour, minute = FIXED_TIME_OPTIONS[raw]
-        run_local = datetime.combine(target_date, datetime.min.time()).replace(tzinfo=tz)
+        run_local = datetime.combine(
+            target_date, datetime.min.time()).replace(tzinfo=tz)
         run_local = run_local.replace(hour=hour, minute=minute)
         run_at = run_local.astimezone(timezone.utc)
     else:

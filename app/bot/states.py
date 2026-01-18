@@ -18,3 +18,7 @@ class EditReminderStates(StatesGroup):
     date_value = State()
     time_value = State()
     cron_expr = State()
+
+
+class DeleteReminderStates(StatesGroup):
+    reminder_id = State()
