@@ -22,3 +22,7 @@ class EditReminderStates(StatesGroup):
 
 class DeleteReminderStates(StatesGroup):
     reminder_id = State()
+
+
+class DisableReminderStates(StatesGroup):
+    reminder_id = State()

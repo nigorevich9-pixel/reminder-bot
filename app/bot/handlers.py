@@ -7,7 +7,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.states import DeleteReminderStates, EditReminderStates, NewReminderStates
+from app.bot.states import (
+    DeleteReminderStates,
+    DisableReminderStates,
+    EditReminderStates,
+    NewReminderStates,
+)
 from app.config.settings import settings
 from app.repositories.reminder_repository import ReminderRepository
 from app.repositories.user_repository import UserRepository
@@ -217,10 +222,14 @@ async def edit_handler(message: Message, state: FSMContext):
 
 
 @router.message(Command("disable"))
-async def disable_handler(message: Message, session: AsyncSession):
+async def disable_handler(message: Message, state: FSMContext, session: AsyncSession):
     args = (message.text or "").split(maxsplit=1)
-    if len(args) < 2 or not args[1].strip().isdigit():
-        await message.answer("Использование: /disable <id>")
+    if len(args) < 2:
+        await message.answer("Введите ID уведомления для отключения:")
+        await state.set_state(DisableReminderStates.reminder_id)
+        return
+    if not args[1].strip().isdigit():
+        await message.answer("Использование: /disable <id> или отправь id в следующем сообщении")
         return
     reminder_id = int(args[1].strip())
     user = await _get_or_create_user(session, message)
@@ -271,6 +280,24 @@ async def delete_id_handler(message: Message, state: FSMContext, session: AsyncS
     await service.delete(reminder)
     await state.clear()
     await message.answer(f"Уведомление #{reminder_id} удалено.")
+
+
+@router.message(DisableReminderStates.reminder_id)
+async def disable_id_handler(message: Message, state: FSMContext, session: AsyncSession):
+    raw = (message.text or "").strip()
+    if not raw.isdigit():
+        await message.answer("Нужен числовой ID уведомления.")
+        return
+    reminder_id = int(raw)
+    user = await _get_or_create_user(session, message)
+    service = ReminderService(ReminderRepository(session))
+    reminder = await service.get_by_id_for_user(reminder_id, user.id)
+    if not reminder:
+        await message.answer("Уведомление не найдено или не принадлежит тебе.")
+        return
+    await service.mark_done(reminder)
+    await state.clear()
+    await message.answer(f"Уведомление #{reminder_id} отключено (status=done).")
 
 
 @router.message(NewReminderStates.title)
