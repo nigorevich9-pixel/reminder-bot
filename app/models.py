@@ -19,10 +19,10 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    reminders: Mapped[list["Reminder"]] = relationship(
+    reminders: Mapped[list[Reminder]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-    jira_subscriptions: Mapped[list["JiraSubscription"]] = relationship(
+    jira_subscriptions: Mapped[list[JiraSubscription]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -47,7 +47,7 @@ class Reminder(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    user: Mapped["User"] = relationship(back_populates="reminders")
+    user: Mapped[User] = relationship(back_populates="reminders")
 
 
 Index("idx_reminders_user_next", Reminder.user_id, Reminder.next_run_at)
@@ -67,7 +67,7 @@ class JiraSubscription(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    user: Mapped["User"] = relationship(back_populates="jira_subscriptions")
+    user: Mapped[User] = relationship(back_populates="jira_subscriptions")
 
     __table_args__ = (
         Index("idx_jira_sub_user_project", user_id, project_key),
@@ -84,8 +84,8 @@ class JiraLastSeen(Base):
     last_checked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    
-    user: Mapped["User"] = relationship()
+
+    user: Mapped[User] = relationship()
 
     __table_args__ = (
         Index("idx_jira_lastseen_user_project", user_id, project_key, unique=True),

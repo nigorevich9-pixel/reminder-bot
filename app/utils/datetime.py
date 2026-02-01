@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import calendar
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from croniter import croniter
@@ -12,7 +12,7 @@ def parse_user_datetime(value: str, tz_name: str) -> datetime:
     for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
         try:
             local_dt = datetime.strptime(value.strip(), fmt).replace(tzinfo=tz)
-            return local_dt.astimezone(timezone.utc)
+            return local_dt.astimezone(UTC)
         except ValueError:
             continue
     raise ValueError("Invalid datetime format")
@@ -59,7 +59,7 @@ def build_user_datetime(date_value: str, time_value: str, tz_name: str) -> datet
     date_part = parse_user_date(date_value)
     time_part = parse_user_time(time_value)
     local_dt = datetime.combine(date_part, time_part).replace(tzinfo=tz)
-    return local_dt.astimezone(timezone.utc)
+    return local_dt.astimezone(UTC)
 
 
 def format_user_datetime(value: datetime | None, tz_name: str) -> str:
@@ -85,14 +85,14 @@ def compute_next_run_at(
         next_dt = croniter(cron_expr, now_local).get_next(datetime)
         if next_dt.tzinfo is None:
             next_dt = next_dt.replace(tzinfo=tz)
-        return next_dt.astimezone(timezone.utc)
+        return next_dt.astimezone(UTC)
 
     if run_at_utc is None:
         raise ValueError("run_at is required for non-cron reminders")
 
     run_local = run_at_utc.astimezone(tz)
     if reminder_type == "one_time":
-        return run_local.astimezone(timezone.utc)
+        return run_local.astimezone(UTC)
 
     next_local = run_local
     while next_local <= now_local:
@@ -105,7 +105,7 @@ def compute_next_run_at(
         else:
             raise ValueError("Unsupported reminder_type")
 
-    return next_local.astimezone(timezone.utc)
+    return next_local.astimezone(UTC)
 
 
 def add_months(value: datetime, months: int) -> datetime:

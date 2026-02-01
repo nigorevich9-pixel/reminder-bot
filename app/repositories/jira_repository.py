@@ -1,12 +1,12 @@
 """Repository for Jira subscriptions."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import select, delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import JiraSubscription, JiraLastSeen, User
+from app.models import JiraLastSeen, JiraSubscription, User
 
 
 class JiraRepository:
@@ -25,7 +25,7 @@ class JiraRepository:
             stmt = stmt.where(JiraSubscription.issue_key == issue_key.upper())
         else:
             stmt = stmt.where(JiraSubscription.issue_key.is_(None))
-        
+
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -33,7 +33,7 @@ class JiraRepository:
         """Get all subscriptions for a user."""
         stmt = select(JiraSubscription).where(
             JiraSubscription.user_id == user_id,
-            JiraSubscription.is_active == True,
+            JiraSubscription.is_active,
         ).order_by(JiraSubscription.project_key, JiraSubscription.issue_key)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
@@ -41,7 +41,7 @@ class JiraRepository:
     async def get_all_active_subscriptions(self) -> list[JiraSubscription]:
         """Get all active subscriptions (for polling worker)."""
         stmt = select(JiraSubscription).where(
-            JiraSubscription.is_active == True
+            JiraSubscription.is_active
         ).order_by(JiraSubscription.project_key)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
@@ -50,7 +50,7 @@ class JiraRepository:
         """Get all subscriptions for a project."""
         stmt = select(JiraSubscription).where(
             JiraSubscription.project_key == project_key.upper(),
-            JiraSubscription.is_active == True,
+            JiraSubscription.is_active,
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
@@ -94,7 +94,7 @@ class JiraRepository:
             stmt = stmt.where(JiraSubscription.issue_key == issue_key.upper())
         else:
             stmt = stmt.where(JiraSubscription.issue_key.is_(None))
-        
+
         result = await self.session.execute(stmt)
         await self.session.commit()
         return result.rowcount > 0
@@ -118,8 +118,8 @@ class JiraRepository:
         )
         result = await self.session.execute(stmt)
         record = result.scalar_one_or_none()
-        
-        now = datetime.now(timezone.utc)
+
+        now = datetime.now(UTC)
         if record:
             record.last_checked_at = now
         else:
@@ -129,13 +129,13 @@ class JiraRepository:
                 last_checked_at=now,
             )
             self.session.add(record)
-        
+
         await self.session.commit()
 
     async def get_unique_projects(self) -> list[str]:
         """Get list of unique project keys with active subscriptions."""
         stmt = select(JiraSubscription.project_key).where(
-            JiraSubscription.is_active == True
+            JiraSubscription.is_active
         ).distinct()
         result = await self.session.execute(stmt)
         return [row[0] for row in result.all()]
@@ -151,7 +151,7 @@ class JiraRepository:
             select(JiraSubscription.user_id, User.tg_id)
             .join(User, User.id == JiraSubscription.user_id)
             .where(
-                JiraSubscription.is_active == True,
+                JiraSubscription.is_active,
                 JiraSubscription.project_key == project_key.upper(),
             )
             .where(

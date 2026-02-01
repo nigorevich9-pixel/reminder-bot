@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from aiogram import Router
@@ -89,7 +89,7 @@ def _format_reminders(reminders) -> str:
 
     def sort_key(reminder):
         dt = reminder_dt(reminder)
-        sort_dt = dt if dt else datetime.max.replace(tzinfo=timezone.utc)
+        sort_dt = dt if dt else datetime.max.replace(tzinfo=UTC)
         status_rank = 0 if reminder.status == "active" else 1
         return (status_rank, sort_dt)
 
@@ -531,7 +531,7 @@ async def new_time_handler(message: Message, state: FSMContext, session: AsyncSe
             return
         target_date = parse_user_date(date_value)
         run_local = datetime.combine(target_date, base_time).replace(tzinfo=tz)
-        run_at = run_local.astimezone(timezone.utc)
+        run_at = run_local.astimezone(UTC)
     elif raw in FIXED_TIME_OPTIONS:
         tz = ZoneInfo(tz_name)
         date_value = data.get("date_value")
@@ -543,7 +543,7 @@ async def new_time_handler(message: Message, state: FSMContext, session: AsyncSe
         run_local = datetime.combine(
             target_date, datetime.min.time()).replace(tzinfo=tz)
         run_local = run_local.replace(hour=hour, minute=minute)
-        run_at = run_local.astimezone(timezone.utc)
+        run_at = run_local.astimezone(UTC)
     else:
         try:
             run_at = build_user_datetime(data["date_value"], raw, tz_name)
@@ -594,7 +594,7 @@ async def edit_time_handler(message: Message, state: FSMContext, session: AsyncS
             return
         target_date = parse_user_date(date_value)
         run_local = datetime.combine(target_date, base_time).replace(tzinfo=tz)
-        run_at = run_local.astimezone(timezone.utc)
+        run_at = run_local.astimezone(UTC)
     elif raw in FIXED_TIME_OPTIONS:
         tz = ZoneInfo(tz_name)
         date_value = data.get("date_value")
@@ -606,7 +606,7 @@ async def edit_time_handler(message: Message, state: FSMContext, session: AsyncS
         run_local = datetime.combine(
             target_date, datetime.min.time()).replace(tzinfo=tz)
         run_local = run_local.replace(hour=hour, minute=minute)
-        run_at = run_local.astimezone(timezone.utc)
+        run_at = run_local.astimezone(UTC)
     else:
         try:
             run_at = build_user_datetime(data["date_value"], raw, tz_name)

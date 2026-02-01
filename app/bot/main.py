@@ -7,6 +7,7 @@ from app.bot.middlewares import DBSessionMiddleware
 from app.config.settings import settings
 from app.db import AsyncSessionLocal
 
+
 # Optional Jira integration (separate feature)
 try:
     from app.bot.jira_handlers import router as jira_router

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from app.repositories.reminder_repository import ReminderRepository
 from app.utils.datetime import compute_next_run_at
@@ -12,7 +12,7 @@ class ReminderService:
         return await self._repo.list_by_user(user_id)
 
     async def list_next_days(self, user_id: int, days: int = 7):
-        until_dt = datetime.now(timezone.utc) + timedelta(days=days)
+        until_dt = datetime.now(UTC) + timedelta(days=days)
         return await self._repo.list_next_days(user_id, until_dt)
 
     async def create(

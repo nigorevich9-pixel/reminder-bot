@@ -1,7 +1,7 @@
 """Jira polling worker - checks for updates and sends notifications."""
 import asyncio
 import logging
-from datetime import datetime, time, timedelta, timezone
+from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -23,15 +23,15 @@ async def check_jira_updates(
 ) -> int:
     """Check for Jira updates and notify subscribers."""
     repo = JiraRepository(session)
-    
+
     # Get all unique projects with active subscriptions
     projects = await repo.get_unique_projects()
     if not projects:
         return 0
-    
+
     jira = JiraService()
     notified = 0
-    
+
     # Check each project
     lookback_minutes = max(lookback_minutes, 3)  # At least 3 minutes lookback
 
@@ -40,37 +40,37 @@ async def check_jira_updates(
     except Exception as e:
         logger.error("Failed to fetch Jira updates: %s", e)
         return 0
-    
+
     if not issues:
         return 0
-    
+
     logger.info("Found %d updated issues in projects %s", len(issues), projects)
-    
+
     # For each updated issue, find subscribers and notify
     for issue in issues:
         key = issue.get("key", "")
         if not key:
             continue
-        
+
         project_key = key.split("-")[0] if "-" in key else key
-        
+
         # Get subscribers for this issue
         subscribers = await repo.get_subscribers_for_issue(project_key, key)
         if not subscribers:
             continue
-        
+
         # Get changelog for more details (optional, can be slow)
         try:
-            since = datetime.now(timezone.utc) - timedelta(minutes=lookback_minutes)
+            since = datetime.now(UTC) - timedelta(minutes=lookback_minutes)
             changes = await jira.get_issue_changelog(key, since=since)
         except Exception:
             changes = None
-        
+
         # Format message
         message = format_issue_update(issue, changes)
-        
+
         # Notify each subscriber
-        for user_id, tg_id in subscribers:
+        for _user_id, tg_id in subscribers:
             try:
                 await bot.send_message(
                     chat_id=tg_id,
@@ -82,7 +82,7 @@ async def check_jira_updates(
                 logger.debug("Notified user %d about %s", tg_id, key)
             except Exception as e:
                 logger.warning("Failed to notify user %d about %s: %s", tg_id, key, e)
-    
+
     return notified
 
 
@@ -101,11 +101,11 @@ async def run_jira_loop() -> None:
     """Main loop for Jira polling."""
     if not settings.tg_token:
         raise RuntimeError("TG_TOKEN is not set")
-    
+
     if not settings.jira_email or not settings.jira_api_token:
         logger.warning("Jira not configured (JIRA_EMAIL/JIRA_API_TOKEN missing), worker disabled")
         return
-    
+
     # Test connection on startup
     try:
         jira = JiraService()
@@ -114,7 +114,7 @@ async def run_jira_loop() -> None:
     except Exception as e:
         logger.error("Failed to connect to Jira: %s", e)
         return
-    
+
     bot = Bot(token=settings.tg_token)
     poll_seconds = settings.jira_poll_seconds
     tz = ZoneInfo(settings.default_timezone)
