@@ -1,8 +1,10 @@
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.repositories.reminder_repository import ReminderRepository
 from app.utils.datetime import compute_next_run_at
 
+
+UTC = timezone.utc
 
 class ReminderService:
     def __init__(self, repo: ReminderRepository) -> None:
