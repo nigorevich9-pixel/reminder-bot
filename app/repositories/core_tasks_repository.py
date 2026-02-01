@@ -20,7 +20,7 @@ class CoreTasksRepository:
         await self._session.execute(
             sa.text(
                 "INSERT INTO events (source, external_id, payload_hash, payload) "
-                "VALUES (:source, :external_id, :payload_hash, :payload::jsonb)"
+                "VALUES (:source, :external_id, :payload_hash, CAST(:payload AS jsonb))"
             ),
             {
                 "source": source,
