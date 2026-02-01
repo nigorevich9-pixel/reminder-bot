@@ -1,13 +1,15 @@
 """Repository for Jira subscriptions."""
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import JiraLastSeen, JiraSubscription, User
 
+
+UTC = timezone.utc
 
 class JiraRepository:
     def __init__(self, session: AsyncSession) -> None:

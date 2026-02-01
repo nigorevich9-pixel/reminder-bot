@@ -1,5 +1,7 @@
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+
+UTC = timezone.utc
 
 from aiogram import Router
 from aiogram.filters import Command

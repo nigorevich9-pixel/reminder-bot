@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import calendar
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from croniter import croniter
 
+
+UTC = timezone.utc
 
 def parse_user_datetime(value: str, tz_name: str) -> datetime:
     tz = ZoneInfo(tz_name)

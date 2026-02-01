@@ -1,7 +1,7 @@
 """Jira polling worker - checks for updates and sends notifications."""
 import asyncio
 import logging
-from datetime import UTC, datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -14,6 +14,7 @@ from app.services.jira_service import JiraService, format_issue_update
 
 
 logger = logging.getLogger("jira_worker")
+UTC = timezone.utc
 
 
 async def check_jira_updates(

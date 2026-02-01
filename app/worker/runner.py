@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,7 @@ from app.utils.datetime import compute_next_run_at
 
 
 logger = logging.getLogger("reminder_worker")
+UTC = timezone.utc
 
 
 async def process_due_reminders(session: AsyncSession, bot: Bot) -> int:
