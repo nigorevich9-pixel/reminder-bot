@@ -8,6 +8,7 @@ from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKey
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.states import (
+    CoreRequestStates,
     DeleteReminderStates,
     DisableReminderStates,
     EditReminderStates,
@@ -15,6 +16,7 @@ from app.bot.states import (
 )
 from app.config.settings import settings
 from app.repositories.reminder_repository import ReminderRepository
+from app.repositories.core_tasks_repository import CoreTasksRepository
 from app.repositories.user_repository import UserRepository
 from app.services.reminder_service import ReminderService
 from app.services.user_service import UserService
@@ -166,6 +168,11 @@ async def start_handler(message: Message, session: AsyncSession):
         "/edit — редактировать уведомление\n"
         "/disable — отключить уведомление\n"
         "/delete — удалить уведомление\n"
+        "/core — вопрос/задача для оркестратора\n"
+        "/task <id> — статус задачи\n"
+        "/run <task_id> — запустить задачу/вопрос\n"
+        "/hold <task_id> — приостановить (пока логируем)\n"
+        "/ask <task_id> <text> — задать уточнение (пока логируем)\n"
         "/cancel — отменить создание"
     )
 
@@ -202,6 +209,150 @@ async def list30_handler(message: Message, session: AsyncSession):
 async def cancel_handler(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Создание уведомления отменено.", reply_markup=ReplyKeyboardRemove())
+
+
+@router.message(Command("core"))
+async def core_handler(message: Message, state: FSMContext):
+    await state.clear()
+    await state.set_state(CoreRequestStates.kind)
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Вопрос"), KeyboardButton(text="Задача")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+    await message.answer("Что отправляем в оркестратор?", reply_markup=kb)
+
+
+@router.message(CoreRequestStates.kind)
+async def core_kind_handler(message: Message, state: FSMContext):
+    kind_text = (message.text or "").strip().lower()
+    if kind_text == "вопрос":
+        kind = "question"
+    elif kind_text == "задача":
+        kind = "task"
+    else:
+        await message.answer("Выбери: Вопрос или Задача")
+        return
+
+    await state.update_data(kind=kind)
+    await state.set_state(CoreRequestStates.text)
+    await message.answer("Отправь текст.", reply_markup=ReplyKeyboardRemove())
+
+
+@router.message(CoreRequestStates.text)
+async def core_text_handler(message: Message, state: FSMContext, session: AsyncSession):
+    data = await state.get_data()
+    kind = data.get("kind")
+    text = (message.text or "").strip()
+    if kind not in {"question", "task"}:
+        await state.clear()
+        await message.answer("Ошибка: неизвестный тип запроса. Повтори /core")
+        return
+    if not text:
+        await message.answer("Текст пустой. Отправь текст.")
+        return
+
+    await _get_or_create_user(session, message)
+    repo = CoreTasksRepository(session)
+    payload = {
+        "event_type": "user_request",
+        "tg": {
+            "tg_id": message.from_user.id,
+            "chat_id": message.chat.id,
+            "message_id": message.message_id,
+        },
+        "request": {
+            "kind": kind,
+            "text": text,
+            "project_id": None,
+            "attachments": [],
+        },
+    }
+    external_id = f"{message.chat.id}:{message.message_id}"
+    await repo.insert_event(source="telegram", external_id=external_id, payload=payload)
+    await session.commit()
+    await state.clear()
+    await message.answer("Принято. Создал событие в core. Дальше жди task в статусе WAITING_APPROVAL.")
+
+
+async def _insert_core_command(
+    session: AsyncSession, message: Message, *, name: str, task_id: int, text: str | None
+) -> None:
+    await _get_or_create_user(session, message)
+    repo = CoreTasksRepository(session)
+    payload = {
+        "event_type": "user_command",
+        "tg": {
+            "tg_id": message.from_user.id,
+            "chat_id": message.chat.id,
+            "message_id": message.message_id,
+        },
+        "command": {
+            "name": name,
+            "task_id": task_id,
+            "text": text,
+        },
+    }
+    external_id = f"{message.chat.id}:{message.message_id}"
+    await repo.insert_event(source="telegram", external_id=external_id, payload=payload)
+
+
+@router.message(Command("run"))
+async def run_task_handler(message: Message, session: AsyncSession):
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2 or not args[1].strip().isdigit():
+        await message.answer("Использование: /run <task_id>")
+        return
+    task_id = int(args[1].strip())
+    await _insert_core_command(session, message, name="run", task_id=task_id, text=None)
+    await session.commit()
+    await message.answer(f"Ок. Отправил run для task #{task_id}.")
+
+
+@router.message(Command("hold"))
+async def hold_task_handler(message: Message, session: AsyncSession):
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2 or not args[1].strip().isdigit():
+        await message.answer("Использование: /hold <task_id>")
+        return
+    task_id = int(args[1].strip())
+    await _insert_core_command(session, message, name="hold", task_id=task_id, text=None)
+    await session.commit()
+    await message.answer(f"Ок. Отправил hold для task #{task_id}.")
+
+
+@router.message(Command("ask"))
+async def ask_task_handler(message: Message, session: AsyncSession):
+    args = (message.text or "").split(maxsplit=2)
+    if len(args) < 2 or not args[1].strip().isdigit():
+        await message.answer("Использование: /ask <task_id> <text>")
+        return
+    task_id = int(args[1].strip())
+    text = args[2].strip() if len(args) >= 3 else ""
+    await _insert_core_command(session, message, name="ask", task_id=task_id, text=text or None)
+    await session.commit()
+    await message.answer(f"Ок. Отправил ask для task #{task_id}.")
+
+
+@router.message(Command("task"))
+async def task_status_handler(message: Message, session: AsyncSession):
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2 or not args[1].strip().isdigit():
+        await message.answer("Использование: /task <id>")
+        return
+    task_id = int(args[1].strip())
+    repo = CoreTasksRepository(session)
+    task = await repo.get_task(task_id=task_id)
+    if not task:
+        await message.answer("Задача не найдена.")
+        return
+    answer = await repo.get_latest_llm_answer(task_id=task_id)
+    msg = f"task #{task['id']} • {task['status']}\n{task['title']}"
+    if answer:
+        msg += f"\n\nОтвет:\n{answer}"
+    await message.answer(msg)
 
 
 @router.message(Command("new"))
