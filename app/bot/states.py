@@ -26,3 +26,8 @@ class DeleteReminderStates(StatesGroup):
 
 class DisableReminderStates(StatesGroup):
     reminder_id = State()
+
+
+class CoreRequestStates(StatesGroup):
+    kind = State()
+    text = State()
