@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +16,7 @@ logger = logging.getLogger("reminder_worker")
 
 async def process_due_reminders(session: AsyncSession, bot: Bot) -> int:
     repo = ReminderRepository(session)
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     since_utc = now_utc - timedelta(hours=1)
     due = await repo.list_due(since_utc, now_utc, limit=100)
     if not due:

@@ -1,0 +1,134 @@
+# ============================================================================
+# UNIVERSAL PROJECT CONFIG - Python Code Style & Linting
+# ============================================================================
+# Applies to all Python projects in this workspace.
+# AI/LLM agents: DO NOT reformat code. Follow these rules when writing new code.
+# ============================================================================
+
+[project]
+name = "workspace"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+# ============================================================================
+# RUFF - Fast Python Linter & Formatter (replaces flake8, isort, black)
+# ============================================================================
+[tool.ruff]
+target-version = "py311"
+line-length = 100  # Max line length. DO NOT auto-wrap existing code.
+indent-width = 4
+
+# Files to exclude from linting
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    "node_modules",
+    "*.egg-info",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+# Rules to enable
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort (imports)
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "SIM",    # flake8-simplify
+]
+
+# Rules to ignore
+ignore = [
+    "E501",   # line too long (handled by line-length, don't auto-fix)
+    "E731",   # lambda assignment (sometimes useful)
+    "B008",   # function call in default argument (FastAPI Depends)
+    "B905",   # zip without strict= (Python 3.10+)
+    "SIM108", # ternary instead of if-else (readability preference)
+]
+
+# Allow autofix for all enabled rules
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.isort]
+# Import sorting rules
+known-first-party = ["app", "src", "lib", "core", "utils", "config"]
+known-third-party = ["fastapi", "pydantic", "sqlalchemy", "redis", "celery"]
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+force-single-line = false
+lines-after-imports = 2
+combine-as-imports = true
+
+[tool.ruff.format]
+# Formatting rules (like Black)
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"
+
+# ============================================================================
+# BLACK - Code Formatter (if used instead of ruff format)
+# ============================================================================
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+skip-string-normalization = false
+
+# ============================================================================
+# ISORT - Import Sorting (if used standalone)
+# ============================================================================
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["app", "src", "lib", "core", "utils", "config"]
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+skip_gitignore = true
+combine_as_imports = true
+force_single_line = false
+lines_after_imports = 2
+
+# ============================================================================
+# MYPY - Static Type Checking
+# ============================================================================
+[tool.mypy]
+python_version = "3.11"
+strict = false
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+no_implicit_optional = true
+show_error_codes = true
+
+# ============================================================================
+# PYTEST - Testing
+# ============================================================================
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+# ============================================================================
+# COVERAGE - Code Coverage
+# ============================================================================
+[tool.coverage.run]
+source = ["app", "src"]
+omit = ["*/tests/*", "*/__pycache__/*", "*/migrations/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]

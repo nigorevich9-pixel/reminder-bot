@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -29,7 +29,7 @@ class JiraService:
         """Search issues using JQL."""
         fields = fields or ["key", "summary", "status", "assignee", "updated"]
         url = f"{self.base_url}/rest/api/3/search"
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 url,
@@ -47,7 +47,7 @@ class JiraService:
     async def get_issue(self, issue_key: str) -> dict[str, Any]:
         """Get single issue by key."""
         url = f"{self.base_url}/rest/api/3/issue/{issue_key}"
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 url,
@@ -65,7 +65,7 @@ class JiraService:
     ) -> list[dict[str, Any]]:
         """Get issue changelog (history of changes)."""
         url = f"{self.base_url}/rest/api/3/issue/{issue_key}/changelog"
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 url,
@@ -77,9 +77,9 @@ class JiraService:
             )
             response.raise_for_status()
             data = response.json()
-            
+
             changes = data.get("values", [])
-            
+
             if since:
                 # Filter changes after 'since' timestamp
                 filtered = []
@@ -93,20 +93,20 @@ class JiraService:
                         if created > since:
                             filtered.append(change)
                 return filtered
-            
+
             return changes
 
     async def get_recently_updated_issues(
-        self, 
-        project_keys: list[str], 
+        self,
+        project_keys: list[str],
         minutes: int = 5
     ) -> list[dict[str, Any]]:
         """Get issues updated in the last N minutes for given projects."""
         projects_jql = ", ".join(f'"{p}"' for p in project_keys)
         jql = f"project IN ({projects_jql}) AND updated >= -{minutes}m ORDER BY updated DESC"
-        
+
         return await self.search_issues(
-            jql, 
+            jql,
             fields=["key", "summary", "status", "assignee", "updated", "project"]
         )
 
@@ -116,7 +116,7 @@ class JiraService:
         if project_key:
             jql = f'project = "{project_key}" AND {jql}'
         jql += " ORDER BY updated DESC"
-        
+
         return await self.search_issues(jql)
 
     async def test_connection(self) -> bool:
@@ -159,31 +159,31 @@ def format_issue_update(issue: dict[str, Any], changes: list[dict[str, Any]] | N
     key = issue.get("key", "???")
     summary = fields.get("summary", "No summary")
     status = fields.get("status", {}).get("name", "Unknown")
-    
+
     assignee_data = fields.get("assignee")
     assignee = assignee_data.get("displayName", "Unassigned") if assignee_data else "Unassigned"
-    
-    project = fields.get("project", {}).get("key", "")
-    
+
+    fields.get("project", {}).get("key", "")
+
     lines = [
         f"🎫 <b>{key}</b>",
         f"📋 {summary}",
         f"📊 Status: <b>{status}</b>",
         f"👤 Assignee: {assignee}",
     ]
-    
+
     if changes:
         lines.append("\n📝 <b>Changes:</b>")
         for change in changes[:3]:  # Limit to 3 most recent
-            author = change.get("author", {}).get("displayName", "Unknown")
+            change.get("author", {}).get("displayName", "Unknown")
             for item in change.get("items", []):
                 field = item.get("field", "")
                 from_val = item.get("fromString", "") or "—"
                 to_val = item.get("toString", "") or "—"
                 lines.append(f"  • {field}: {from_val} → {to_val}")
-    
+
     # Add link
     base_url = settings.jira_base_url.rstrip("/")
     lines.append(f"\n🔗 <a href='{base_url}/browse/{key}'>Open in Jira</a>")
-    
+
     return "\n".join(lines)
