@@ -31,6 +31,9 @@ ENV/
 *.log
 logs/
 
+# Runtime task file (used by llm-bridge)
+task.txt
+
 # Testing
 .coverage
 htmlcov/
