@@ -21,3 +21,6 @@
 ## Git
 - Инициализирован git
 - Репозиторий опубликован на GitHub
+
+## Ecosystem
+- Выделен отдельный репозиторий `core-orchestrator` (control plane) с миграциями core-таблиц в `reminder_db`
