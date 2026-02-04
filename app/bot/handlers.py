@@ -228,6 +228,49 @@ async def tasks_list_handler(message: Message, session: AsyncSession):
     await message.answer("Твои задачи:\n" + "\n".join(lines) + "\n\nПодробности: /task <id>")
 
 
+def _format_age(delta_seconds: float) -> str:
+    seconds = max(int(delta_seconds), 0)
+    minutes = seconds // 60
+    hours = minutes // 60
+    days = hours // 24
+    if days > 0:
+        return f"{days}d {hours % 24}h"
+    if hours > 0:
+        return f"{hours}h {minutes % 60}m"
+    return f"{minutes}m"
+
+
+@router.message(Command("needs_review"))
+async def needs_review_handler(message: Message, session: AsyncSession):
+    await _get_or_create_user(session, message)
+    repo = CoreTasksRepository(session)
+    tasks = await repo.list_needs_review_tasks_for_tg(tg_id=message.from_user.id, limit=50)
+    if not tasks:
+        await message.answer("NEEDS_REVIEW задач нет.")
+        return
+
+    now = datetime.now(UTC)
+    lines = ["NEEDS_REVIEW задачи:"]
+    for t in tasks:
+        task_id = t.get("id")
+        title = (t.get("title") or "").strip()
+        needs_review_at = t.get("needs_review_at")
+        age = None
+        if isinstance(needs_review_at, datetime):
+            dt = needs_review_at
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            age = _format_age((now - dt).total_seconds())
+        age_text = age or "unknown"
+        title_text = title.splitlines()[0].strip() if title else ""
+        if len(title_text) > 80:
+            title_text = title_text[:80] + "…"
+        lines.append(f"- #{task_id} • {age_text} • {title_text}")
+    lines.append("")
+    lines.append("Подробности: /task <id>")
+    await message.answer("\n".join(lines))
+
+
 @router.message(Command("core"))
 async def core_handler(message: Message, state: FSMContext):
     await state.clear()
@@ -477,10 +520,15 @@ async def task_status_handler(message: Message, session: AsyncSession):
     if not task:
         await message.answer("Задача не найдена.")
         return
+    llm_result = await repo.get_latest_llm_result(task_id=task_id)
     answer = await repo.get_latest_llm_answer(task_id=task_id)
     msg = f"task #{task['id']} • {task['status']}\n{task['title']}"
     if answer:
         msg += f"\n\nОтвет:\n{answer}"
+    elif llm_result and isinstance(llm_result.get("clarify_question"), str) and llm_result.get("clarify_question").strip():
+        msg += f"\n\nУточнение:\n{llm_result.get('clarify_question').strip()}"
+    elif llm_result and llm_result.get("json_invalid") is True:
+        msg += "\n\nОтвет от LLM не в JSON формате — поставил на авто-повтор. Если продолжает ломаться, уйдёт в NEEDS_REVIEW."
     await message.answer(msg)
 
 

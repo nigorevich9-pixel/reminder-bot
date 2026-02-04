@@ -26,6 +26,8 @@ Telegram-бот для напоминаний и уведомлений (с по
 - `/list`, `/list7`, `/list14`, `/list30` — список напоминаний
 - `/new` — создать напоминание
 - `/cancel` — отменить создание
+- `/tasks` — список задач в core-orchestrator
+- `/needs_review` — список задач в статусе NEEDS_REVIEW + сколько времени лежат в этом статусе
 - `/jira` — справка по Jira
 - `/jira_watch`, `/jira_unwatch`, `/jira_list`, `/jira_test` — Jira подписки
 
