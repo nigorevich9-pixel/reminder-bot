@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -22,6 +23,7 @@ from app.repositories.core_tasks_repository import CoreTasksRepository
 from app.repositories.user_repository import UserRepository
 from app.services.reminder_service import ReminderService
 from app.services.user_service import UserService
+from app.db import AsyncSessionLocal
 from app.utils.datetime import build_user_datetime, format_user_datetime, parse_user_date
 
 
@@ -172,6 +174,7 @@ async def start_handler(message: Message, session: AsyncSession):
         "/delete — удалить уведомление\n"
         "/core — вопрос/задача для оркестратора\n"
         "/task <id> — статус задачи\n"
+        "/tasks — список твоих задач\n"
         "/run <task_id> — запустить задачу/вопрос\n"
         "/hold <task_id> — приостановить (пока логируем)\n"
         "/ask <task_id> <text> — задать уточнение (пока логируем)\n"
@@ -211,6 +214,18 @@ async def list30_handler(message: Message, session: AsyncSession):
 async def cancel_handler(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Создание уведомления отменено.", reply_markup=ReplyKeyboardRemove())
+
+
+@router.message(Command("tasks"))
+async def tasks_list_handler(message: Message, session: AsyncSession):
+    await _get_or_create_user(session, message)
+    repo = CoreTasksRepository(session)
+    tasks = await repo.list_tasks_for_tg(tg_id=message.from_user.id, limit=20)
+    if not tasks:
+        await message.answer("Пока нет задач. Создай через /core")
+        return
+    lines = [f"#{t['id']} • {t['status']} • {t['title']}" for t in tasks]
+    await message.answer("Твои задачи:\n" + "\n".join(lines) + "\n\nПодробности: /task <id>")
 
 
 @router.message(Command("core"))
@@ -256,6 +271,105 @@ async def core_text_handler(message: Message, state: FSMContext, session: AsyncS
         await message.answer("Текст пустой. Отправь текст.")
         return
 
+    await state.update_data(text=text)
+    await state.set_state(CoreRequestStates.run_mode)
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Запустить сразу")],
+            [KeyboardButton(text="Ждать /run")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+    await message.answer("Как поступаем?", reply_markup=kb)
+
+
+async def _poll_task_id_and_notify(
+    *,
+    bot,
+    chat_id: int,
+    tg_id: int,
+    event_id: int,
+    auto_run: bool,
+    timeout_s: float = 120.0,
+) -> None:
+    try:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(timeout_s, 1.0)
+        backoff_s = 0.5
+        task_id: int | None = None
+
+        while loop.time() < deadline:
+            async with AsyncSessionLocal() as bg_session:
+                repo = CoreTasksRepository(bg_session)
+                task_id = await repo.get_task_id_by_event_id(event_id=event_id)
+            if task_id is not None:
+                break
+            await asyncio.sleep(backoff_s)
+            backoff_s = min(backoff_s * 1.5, 5.0)
+
+        if task_id is None:
+            await bot.send_message(
+                chat_id,
+                "Не дождался создания task_id. Проверь позже через /tasks или /task <id>.",
+            )
+            return
+
+        await bot.send_message(
+            chat_id,
+            f"Создана задача: task #{task_id} • статус WAITING_APPROVAL.\n"
+            f"Посмотреть: /task {task_id}\n"
+            f"Запустить: /run {task_id}",
+        )
+
+        if not auto_run:
+            return
+
+        async with AsyncSessionLocal() as bg_session:
+            repo = CoreTasksRepository(bg_session)
+            payload = {
+                "event_type": "user_command",
+                "tg": {
+                    "tg_id": tg_id,
+                    "chat_id": chat_id,
+                    "message_id": 0,
+                },
+                "command": {
+                    "name": "run",
+                    "task_id": task_id,
+                    "text": None,
+                },
+            }
+            await repo.insert_event(source="telegram", external_id=f"auto-run:{event_id}", payload=payload)
+            await bg_session.commit()
+
+        await bot.send_message(chat_id, f"Ок. Отправил run для task #{task_id}.")
+    except Exception as e:
+        try:
+            await bot.send_message(chat_id, f"Ошибка при ожидании task_id: {e}")
+        except Exception:
+            pass
+
+
+@router.message(CoreRequestStates.run_mode)
+async def core_run_mode_handler(message: Message, state: FSMContext, session: AsyncSession):
+    mode_text = (message.text or "").strip().lower()
+    if mode_text in {"запустить сразу", "сразу", "run"}:
+        auto_run = True
+    elif mode_text in {"ждать /run", "ждать", "wait"}:
+        auto_run = False
+    else:
+        await message.answer("Выбери: Запустить сразу или Ждать /run")
+        return
+
+    data = await state.get_data()
+    kind = data.get("kind")
+    text = data.get("text")
+    if kind not in {"question", "task"} or not isinstance(text, str) or not text.strip():
+        await state.clear()
+        await message.answer("Ошибка: данные запроса потерялись. Повтори /core", reply_markup=ReplyKeyboardRemove())
+        return
+
     await _get_or_create_user(session, message)
     repo = CoreTasksRepository(session)
     payload = {
@@ -267,16 +381,29 @@ async def core_text_handler(message: Message, state: FSMContext, session: AsyncS
         },
         "request": {
             "kind": kind,
-            "text": text,
+            "text": text.strip(),
             "project_id": None,
             "attachments": [],
         },
     }
     external_id = f"{message.chat.id}:{message.message_id}"
-    await repo.insert_event(source="telegram", external_id=external_id, payload=payload)
+    event_id = await repo.insert_event(source="telegram", external_id=external_id, payload=payload)
     await session.commit()
     await state.clear()
-    await message.answer("Принято. Создал событие в core. Дальше жди task в статусе WAITING_APPROVAL.")
+    await message.answer(
+        "Принято. Создал событие в core. Дальше жди task в статусе WAITING_APPROVAL.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+    asyncio.create_task(
+        _poll_task_id_and_notify(
+            bot=message.bot,
+            chat_id=message.chat.id,
+            tg_id=message.from_user.id,
+            event_id=event_id,
+            auto_run=auto_run,
+        )
+    )
 
 
 async def _insert_core_command(

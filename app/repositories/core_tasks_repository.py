@@ -38,16 +38,17 @@ class CoreTasksRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def insert_event(self, *, source: str, external_id: str, payload: dict) -> None:
+    async def insert_event(self, *, source: str, external_id: str, payload: dict) -> int:
         event_type = _payload_get_str(payload, "event_type")
         tg_id = _payload_get_int(payload, "tg", "tg_id")
         chat_id = _payload_get_int(payload, "tg", "chat_id")
         request_kind = _payload_get_str(payload, "request", "kind")
 
-        await self._session.execute(
+        res = await self._session.execute(
             sa.text(
                 "INSERT INTO events (source, external_id, payload_hash, payload, event_type, tg_id, chat_id, request_kind) "
-                "VALUES (:source, :external_id, :payload_hash, CAST(:payload AS jsonb), :event_type, :tg_id, :chat_id, :request_kind)"
+                "VALUES (:source, :external_id, :payload_hash, CAST(:payload AS jsonb), :event_type, :tg_id, :chat_id, :request_kind) "
+                "RETURNING id"
             ),
             {
                 "source": source,
@@ -60,6 +61,35 @@ class CoreTasksRepository:
                 "request_kind": request_kind,
             },
         )
+        return int(res.scalar_one())
+
+    async def get_task_id_by_event_id(self, *, event_id: int) -> int | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT task_id "
+                "FROM task_details "
+                "WHERE kind = 'raw_input' AND CAST(content->>'event_id' AS int) = :event_id "
+                "ORDER BY id DESC LIMIT 1"
+            ),
+            {"event_id": event_id},
+        )
+        task_id = res.scalar_one_or_none()
+        return int(task_id) if isinstance(task_id, int) else None
+
+    async def list_tasks_for_tg(self, *, tg_id: int, limit: int = 20) -> list[dict]:
+        limit = max(min(int(limit), 100), 1)
+        res = await self._session.execute(
+            sa.text(
+                "SELECT t.id, t.title, t.status, t.created_at, t.updated_at "
+                "FROM tasks t "
+                "JOIN users u ON u.id = t.created_by_user_id "
+                "WHERE u.tg_id = :tg_id "
+                "ORDER BY t.id DESC "
+                "LIMIT :limit"
+            ),
+            {"tg_id": tg_id, "limit": limit},
+        )
+        return [dict(r) for r in res.mappings().all()]
 
     async def get_task(self, *, task_id: int) -> dict | None:
         res = await self._session.execute(

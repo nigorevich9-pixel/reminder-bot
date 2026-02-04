@@ -31,3 +31,4 @@ class DisableReminderStates(StatesGroup):
 class CoreRequestStates(StatesGroup):
     kind = State()
     text = State()
+    run_mode = State()
