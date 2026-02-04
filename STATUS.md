@@ -6,6 +6,9 @@
 - Репозиторий на GitHub: `nigorevich9-pixel/reminder-bot`
 - `users/reminders/jira_*` в `reminder_db` используются как базовые таблицы; core-оркестратор расширяет БД новыми таблицами (не ломая бота)
 - `reminder-bot` также пишет входящие команды/запросы в shared inbox таблицу `events` (для `core-orchestrator`).
+- `reminder-worker` также доставляет уведомления по core-задачам:
+  - `SEND_TO_USER` → отправка пользователю (вопрос+ответ) → `DONE`
+  - `WAITING_USER` → отправка уточняющего вопроса пользователю (one-shot)
 
 ## Подключения
 - Postgres URL: `postgresql+asyncpg://reminder_user:reminder_pass@localhost:5432/reminder_db`
