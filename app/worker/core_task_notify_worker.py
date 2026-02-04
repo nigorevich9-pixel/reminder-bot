@@ -153,6 +153,24 @@ async def _process_one_waiting_user(session: AsyncSession, bot: Bot) -> bool:
     return True
 
 
+async def process_core_task_notifications(session: AsyncSession, bot: Bot, *, limit: int = 10) -> int:
+    processed = 0
+    for _ in range(max(int(limit), 1)):
+        if not await _process_one(session, bot):
+            break
+        processed += 1
+    return processed
+
+
+async def process_core_waiting_user_notifications(session: AsyncSession, bot: Bot, *, limit: int = 10) -> int:
+    processed = 0
+    for _ in range(max(int(limit), 1)):
+        if not await _process_one_waiting_user(session, bot):
+            break
+        processed += 1
+    return processed
+
+
 async def run_loop() -> None:
     if not settings.tg_token:
         raise RuntimeError("TG_TOKEN is not set")
@@ -162,19 +180,11 @@ async def run_loop() -> None:
     while True:
         async with AsyncSessionLocal() as session:
             try:
-                processed = 0
-                for _ in range(10):
-                    if not await _process_one(session, bot):
-                        break
-                    processed += 1
+                processed = await process_core_task_notifications(session, bot, limit=10)
                 if processed:
                     logger.info("Sent %s core task notifications", processed)
 
-                clarify_processed = 0
-                for _ in range(10):
-                    if not await _process_one_waiting_user(session, bot):
-                        break
-                    clarify_processed += 1
+                clarify_processed = await process_core_waiting_user_notifications(session, bot, limit=10)
                 if clarify_processed:
                     logger.info("Sent %s core waiting-user notifications", clarify_processed)
             except Exception as exc:

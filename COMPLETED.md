@@ -11,6 +11,12 @@
 - FSM сценарий создания напоминаний с клавиатурами
 - Валидация дат и времени
 - Поддержка cron-расписаний
+- Core orchestration UI:
+  - `/core` (создать request kind=question/task)
+  - `/tasks`, `/task <id>` (просмотр задач/ответов)
+  - `/run <id>`, `/hold <id>`, `/ask <id> <text>` (команды в core)
+  - `/needs_review` (список задач в статусе NEEDS_REVIEW + возраст)
+  - auto-delivery для `SEND_TO_USER` и one-shot уведомление для `WAITING_USER` (в `reminder-worker`)
 
 ## Jira Intake
 - Jira API integration (polling)
