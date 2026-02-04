@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -91,6 +92,38 @@ class CoreTasksRepository:
         )
         return [dict(r) for r in res.mappings().all()]
 
+    async def list_needs_review_tasks_for_tg(self, *, tg_id: int, limit: int = 50) -> list[dict]:
+        limit = max(min(int(limit), 200), 1)
+        res = await self._session.execute(
+            sa.text(
+                "SELECT "
+                "  t.id, t.title, t.status, t.created_at, t.updated_at, tr.needs_review_at "
+                "FROM tasks t "
+                "JOIN users u ON u.id = t.created_by_user_id "
+                "LEFT JOIN LATERAL ("
+                "  SELECT created_at AS needs_review_at "
+                "  FROM task_transitions "
+                "  WHERE task_id = t.id AND to_status = 'NEEDS_REVIEW' "
+                "  ORDER BY id DESC "
+                "  LIMIT 1"
+                ") tr ON true "
+                "WHERE u.tg_id = :tg_id AND t.status = 'NEEDS_REVIEW' "
+                "ORDER BY tr.needs_review_at ASC NULLS LAST, t.updated_at ASC "
+                "LIMIT :limit"
+            ),
+            {"tg_id": tg_id, "limit": limit},
+        )
+        rows = []
+        for r in res.mappings().all():
+            d = dict(r)
+            nra = d.get("needs_review_at")
+            if isinstance(nra, datetime):
+                d["needs_review_at"] = nra
+            else:
+                d["needs_review_at"] = None
+            rows.append(d)
+        return rows
+
     async def get_task(self, *, task_id: int) -> dict | None:
         res = await self._session.execute(
             sa.text("SELECT id, title, status, created_at, updated_at FROM tasks WHERE id = :id"),
@@ -110,4 +143,103 @@ class CoreTasksRepository:
             {"task_id": task_id},
         )
         return res.scalar_one_or_none()
+
+    async def get_raw_input(self, *, task_id: int) -> dict | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT content "
+                "FROM task_details "
+                "WHERE task_id = :task_id AND kind = 'raw_input' "
+                "ORDER BY id DESC LIMIT 1"
+            ),
+            {"task_id": task_id},
+        )
+        row = res.mappings().first()
+        return dict(row["content"]) if row and isinstance(row.get("content"), dict) else None
+
+    async def get_latest_llm_result(self, *, task_id: int) -> dict | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT content "
+                "FROM task_details "
+                "WHERE task_id = :task_id AND kind = 'llm_result' "
+                "ORDER BY id DESC LIMIT 1"
+            ),
+            {"task_id": task_id},
+        )
+        row = res.mappings().first()
+        return dict(row["content"]) if row and isinstance(row.get("content"), dict) else None
+
+    async def pop_one_task_for_send_to_user(self) -> dict | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT id, title, status, created_at, updated_at "
+                "FROM tasks "
+                "WHERE status = 'SEND_TO_USER' "
+                "ORDER BY updated_at ASC "
+                "LIMIT 1 "
+                "FOR UPDATE SKIP LOCKED"
+            )
+        )
+        row = res.mappings().first()
+        return dict(row) if row else None
+
+    async def pop_one_task_for_waiting_user_notify(self) -> dict | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT t.id, t.title, t.status, t.created_at, t.updated_at "
+                "FROM tasks t "
+                "WHERE t.status = 'WAITING_USER' "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM task_details d "
+                "  WHERE d.task_id = t.id AND d.kind = 'tg_waiting_user_notified'"
+                ") "
+                "ORDER BY t.updated_at ASC "
+                "LIMIT 1 "
+                "FOR UPDATE SKIP LOCKED"
+            )
+        )
+        row = res.mappings().first()
+        return dict(row) if row else None
+
+    async def insert_task_detail(self, *, task_id: int, kind: str, content: dict) -> int:
+        res = await self._session.execute(
+            sa.text(
+                "INSERT INTO task_details (task_id, kind, content) "
+                "VALUES (:task_id, :kind, CAST(:content AS jsonb)) "
+                "RETURNING id"
+            ),
+            {"task_id": task_id, "kind": kind, "content": json.dumps(content, ensure_ascii=False, sort_keys=True)},
+        )
+        return int(res.scalar_one())
+
+    async def transition_task(
+        self,
+        *,
+        task_id: int,
+        from_status: str,
+        to_status: str,
+        reason: str | None = None,
+    ) -> bool:
+        res = await self._session.execute(
+            sa.text(
+                "WITH updated AS ("
+                "  UPDATE tasks "
+                "  SET status = :to_status, updated_at = now() "
+                "  WHERE id = :task_id AND status = :from_status "
+                "  RETURNING id"
+                ") "
+                "INSERT INTO task_transitions (task_id, from_status, to_status, actor_user_id, reason) "
+                "SELECT id, :from_status, :to_status, NULL, :reason "
+                "FROM updated "
+                "RETURNING task_id"
+            ),
+            {
+                "task_id": task_id,
+                "from_status": from_status,
+                "to_status": to_status,
+                "reason": reason,
+            },
+        )
+        return res.scalar_one_or_none() is not None
 
