@@ -37,24 +37,6 @@ async def _session():
 
 
 class TestCoreEventsAndNotifyWorker(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self) -> None:
-        async with _session() as session:
-            res = await session.execute(sa.text("SELECT current_database()"))
-            db_name = str(res.scalar_one())
-            if not db_name.endswith("_test"):
-                raise RuntimeError(f"Refusing to TRUNCATE non-test database: {db_name}")
-
-            # Tests use a real Postgres database, so we must clean up between runs to avoid
-            # flakiness from leftover rows (e.g. old SEND_TO_USER tasks).
-            await session.execute(
-                sa.text(
-                    "TRUNCATE TABLE "
-                    "task_transitions, task_details, tasks, users, events "
-                    "RESTART IDENTITY CASCADE"
-                )
-            )
-            await session.commit()
-
     async def test_insert_event_writes_denormalized_columns(self) -> None:
         payload = {
             "event_type": "user_request",

@@ -20,6 +20,51 @@ if [[ "${DATABASE_URL}" != *"@localhost"* && "${DATABASE_URL}" != *"@127.0.0.1"*
   exit 2
 fi
 
+echo "[db] reset test DB state"
+python3 - <<'PY'
+import asyncio
+import os
+
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import create_async_engine
+
+
+async def _reset_db() -> None:
+    database_url = os.environ["DATABASE_URL"]
+    engine = create_async_engine(database_url, echo=False, isolation_level="AUTOCOMMIT")
+    try:
+        async with engine.connect() as conn:
+            try:
+                await conn.execute(sa.text("DROP SCHEMA public CASCADE"))
+                await conn.execute(sa.text("CREATE SCHEMA public"))
+                print("[db] reset: dropped+created public schema")
+                return
+            except Exception as exc:
+                print(f"[db] reset: drop schema failed, fallback to DROP TABLE/SEQUENCE ({exc})")
+
+        async with engine.connect() as conn:
+            res = await conn.execute(
+                sa.text("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")
+            )
+            tables = [r[0] for r in res.fetchall()]
+            for t in tables:
+                await conn.execute(sa.text(f'DROP TABLE IF EXISTS "{t}" CASCADE'))
+
+            res = await conn.execute(
+                sa.text("SELECT sequencename FROM pg_sequences WHERE schemaname = 'public' ORDER BY sequencename")
+            )
+            seqs = [r[0] for r in res.fetchall()]
+            for s in seqs:
+                await conn.execute(sa.text(f'DROP SEQUENCE IF EXISTS "{s}" CASCADE'))
+
+            print(f"[db] reset: dropped {len(tables)} tables and {len(seqs)} sequences")
+    finally:
+        await engine.dispose()
+
+
+asyncio.run(_reset_db())
+PY
+
 RUN_MIGRATIONS="${RUN_MIGRATIONS:-1}"
 
 if [[ "${RUN_MIGRATIONS}" == "1" ]]; then
