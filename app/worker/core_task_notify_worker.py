@@ -1,12 +1,18 @@
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
-from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import settings
 from app.db import AsyncSessionLocal
 from app.repositories.core_tasks_repository import CoreTasksRepository
+
+
+if TYPE_CHECKING:
+    from aiogram import Bot
+else:
+    Bot = object  # type: ignore[misc,assignment]
 
 
 logger = logging.getLogger("core_task_notify_worker")

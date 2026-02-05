@@ -20,6 +20,22 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    # NOTE: `events` table was initially created manually before git history existed.
+    # For clean installs (e.g. test DB), ensure the shared inbox table exists.
+    # Keep this minimal: base columns only; denormalized columns are added below.
+    op.execute(
+        """
+        CREATE TABLE IF NOT EXISTS events (
+          id SERIAL PRIMARY KEY,
+          source VARCHAR(16) NOT NULL,
+          external_id VARCHAR(128) NULL,
+          payload_hash VARCHAR(64) NOT NULL,
+          payload JSONB NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+
     op.add_column("events", sa.Column("event_type", sa.String(length=64), nullable=True))
     op.add_column("events", sa.Column("tg_id", sa.BigInteger(), nullable=True))
     op.add_column("events", sa.Column("chat_id", sa.BigInteger(), nullable=True))

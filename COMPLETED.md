@@ -30,3 +30,8 @@
 
 ## Ecosystem
 - Выделен отдельный репозиторий `core-orchestrator` (control plane) с миграциями core-таблиц в `reminder_db`
+
+## Testing / Smoke checks
+- Добавлены короткие functional smoke тесты (проверяют `events` + доставку `SEND_TO_USER`/`WAITING_USER` без реального Telegram).
+- Добавлен `./check.sh` (проверка этого репозитория одной командой) и `/root/test_all.sh` (проверка всех репо по очереди).
+- Миграции сделаны воспроизводимыми для чистой test-БД: `events` создаётся через `CREATE TABLE IF NOT EXISTS` перед добавлением denormalized колонок.

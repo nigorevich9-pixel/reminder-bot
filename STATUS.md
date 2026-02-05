@@ -20,6 +20,14 @@
 - `/etc/systemd/system/reminder-worker.service`
 - `/etc/systemd/system/jira-worker.service`
 
+## Проверки / тесты (smoke)
+- Локальная проверка репозитория: `./check.sh`
+- Сквозная проверка всех репо: `/root/test_all.sh`
+- Требование безопасности: `DATABASE_URL` должен указывать на test-БД (например `reminder_db_test`) и host `localhost`/`127.0.0.1` (guard включён в скриптах).
+- Functional smoke покрывают:
+  - запись событий в `events` (включая denormalized поля)
+  - доставку задач `SEND_TO_USER`/`WAITING_USER` через stub-бот и корректные transitions
+
 ## Осталось сделать (общие)
 - Персистентные таймзоны пользователей (если понадобится)
 - Доп. очистка/архивирование старых уведомлений
