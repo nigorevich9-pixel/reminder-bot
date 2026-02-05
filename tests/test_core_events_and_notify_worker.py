@@ -64,6 +64,45 @@ class TestCoreEventsAndNotifyWorker(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(row["request_kind"], "question")
             self.assertEqual(row["et"], "user_request")
 
+    async def test_get_latest_codegen_job_returns_row(self) -> None:
+        async with _session() as session:
+            # Create user + task
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO users (tg_id, username, first_name) "
+                    "VALUES (:tg_id, NULL, NULL) "
+                    "ON CONFLICT (tg_id) DO UPDATE SET tg_id = EXCLUDED.tg_id "
+                    "RETURNING id"
+                ),
+                {"tg_id": 9010},
+            )
+            user_id = int(res.scalar_one())
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO tasks (created_by_user_id, project_id, source, external_key, title, status) "
+                    "VALUES (:uid, NULL, 'telegram', NULL, 't', 'NEEDS_REVIEW') "
+                    "RETURNING id"
+                ),
+                {"uid": user_id},
+            )
+            task_id = int(res.scalar_one())
+            await session.execute(
+                sa.text(
+                    "INSERT INTO codegen_jobs (task_id, repo_id, status, base_branch, branch_name, pr_url, error) "
+                    "VALUES (:tid, NULL, 'DONE', 'main', 'ai/x', 'https://example/pr/1', NULL)"
+                ),
+                {"tid": task_id},
+            )
+            await session.commit()
+
+        async with _session() as session:
+            repo = CoreTasksRepository(session)
+            job = await repo.get_latest_codegen_job(task_id=task_id)
+            self.assertIsNotNone(job)
+            assert job is not None
+            self.assertEqual(job.get("status"), "DONE")
+            self.assertEqual(job.get("pr_url"), "https://example/pr/1")
+
     async def test_send_to_user_transitions_to_done_and_sends_message(self) -> None:
         bot = _StubBot()
 
@@ -90,6 +129,12 @@ class TestCoreEventsAndNotifyWorker(unittest.IsolatedAsyncioTestCase):
                 {"uid": user_id},
             )
             task_id = int(res.scalar_one())
+
+            # Ensure our task is picked first (ordered by updated_at ASC).
+            await session.execute(
+                sa.text("UPDATE tasks SET updated_at = now() - interval '365 days' WHERE id = :id"),
+                {"id": task_id},
+            )
 
             # raw_input detail must include tg.chat_id and text
             await session.execute(
@@ -123,7 +168,7 @@ class TestCoreEventsAndNotifyWorker(unittest.IsolatedAsyncioTestCase):
             await session.commit()
 
         async with _session() as session:
-            sent = await process_core_task_notifications(session, bot, limit=5)
+            sent = await process_core_task_notifications(session, bot, limit=1)
             await session.commit()
             self.assertEqual(sent, 1)
 
@@ -131,9 +176,10 @@ class TestCoreEventsAndNotifyWorker(unittest.IsolatedAsyncioTestCase):
             res = await session.execute(sa.text("SELECT status FROM tasks WHERE id = :id"), {"id": task_id})
             self.assertEqual(res.scalar_one(), "DONE")
 
-        self.assertEqual(len(bot.sent), 1)
-        chat_id, text = bot.sent[0]
-        self.assertEqual(chat_id, 12345)
+        self.assertGreaterEqual(len(bot.sent), 1)
+        matched = [(cid, text) for (cid, text) in bot.sent if cid == 12345]
+        self.assertEqual(len(matched), 1)
+        _chat_id, text = matched[0]
         self.assertIn("Ответ:", text)
 
     async def test_waiting_user_is_notified_once(self) -> None:

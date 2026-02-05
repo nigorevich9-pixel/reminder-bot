@@ -170,6 +170,19 @@ class CoreTasksRepository:
         row = res.mappings().first()
         return dict(row["content"]) if row and isinstance(row.get("content"), dict) else None
 
+    async def get_latest_codegen_job(self, *, task_id: int) -> dict | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT id, status, base_branch, branch_name, pr_url, error, created_at, started_at, finished_at "
+                "FROM codegen_jobs "
+                "WHERE task_id = :task_id "
+                "ORDER BY id DESC LIMIT 1"
+            ),
+            {"task_id": task_id},
+        )
+        row = res.mappings().first()
+        return dict(row) if row else None
+
     async def pop_one_task_for_send_to_user(self) -> dict | None:
         res = await self._session.execute(
             sa.text(
