@@ -522,6 +522,7 @@ async def task_status_handler(message: Message, session: AsyncSession):
         return
     llm_result = await repo.get_latest_llm_result(task_id=task_id)
     answer = await repo.get_latest_llm_answer(task_id=task_id)
+    codegen_job = await repo.get_latest_codegen_job(task_id=task_id)
     msg = f"task #{task['id']} • {task['status']}\n{task['title']}"
     if answer:
         msg += f"\n\nОтвет:\n{answer}"
@@ -529,6 +530,17 @@ async def task_status_handler(message: Message, session: AsyncSession):
         msg += f"\n\nУточнение:\n{llm_result.get('clarify_question').strip()}"
     elif llm_result and llm_result.get("json_invalid") is True:
         msg += "\n\nОтвет от LLM не в JSON формате — поставил на авто-повтор. Если продолжает ломаться, уйдёт в NEEDS_REVIEW."
+
+    if codegen_job:
+        pr_url = (codegen_job.get("pr_url") or "").strip()
+        status = (codegen_job.get("status") or "").strip()
+        error = (codegen_job.get("error") or "").strip()
+        if pr_url:
+            msg += f"\n\nPR:\n{pr_url}"
+        elif status:
+            msg += f"\n\nCodegen:\n{status}"
+            if status == "FAILED" and error:
+                msg += f"\n{error}"
     await message.answer(msg)
 
 
