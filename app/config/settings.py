@@ -17,7 +17,7 @@ class Settings:
     tg_token: str | None = os.getenv("TG_TOKEN")
     tg_api_base: str = os.getenv("TG_API_BASE", "https://api.telegram.org")
     default_timezone: str = os.getenv("DEFAULT_TIMEZONE", "Europe/Moscow")
-    worker_poll_seconds: int = int(os.getenv("WORKER_POLL_SECONDS", "30"))
+    worker_poll_seconds: int = int(os.getenv("WORKER_POLL_SECONDS", "5"))
 
     # Jira integration
     jira_base_url: str = os.getenv("JIRA_BASE_URL", "https://legalbet.atlassian.net")
