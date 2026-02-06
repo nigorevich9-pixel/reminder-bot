@@ -7,6 +7,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _is_running_tests() -> bool:
+    import sys
+
+    if "unittest" in sys.modules:
+        return True
+    return any("pytest" in arg for arg in sys.argv)
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str = os.getenv(
@@ -27,3 +35,8 @@ class Settings:
 
 
 settings = Settings()
+
+if _is_running_tests() and "_test" not in (settings.database_url or ""):
+    raise RuntimeError(
+        f"DATABASE_URL must point to a *_test database when running tests. Got: {settings.database_url}"
+    )
