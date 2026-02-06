@@ -10,7 +10,11 @@ load_dotenv()
 def _is_running_tests() -> bool:
     import sys
 
-    if "unittest" in sys.modules:
+    # pytest sets PYTEST_CURRENT_TEST; this is the most reliable signal
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return True
+    # fallback: pytest imported / invoked
+    if "pytest" in sys.modules:
         return True
     return any("pytest" in arg for arg in sys.argv)
 
