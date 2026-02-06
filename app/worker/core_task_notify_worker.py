@@ -92,8 +92,18 @@ async def _process_one(session: AsyncSession, bot: Bot) -> bool:
     try:
         await bot.send_message(chat_id=chat_id, text=msg)
     except Exception as exc:
-        logger.warning("Failed to send task %s: %s", task_id, exc)
-        await session.rollback()
+        logger.warning("Failed to send task %s to chat_id=%s: %s", task_id, chat_id, exc)
+        ok = await repo.transition_task(
+            task_id=task_id,
+            from_status="SEND_TO_USER",
+            to_status="FAILED",
+            reason=f"{CONSUMER_NAME}: tg send failed: {exc}",
+        )
+        if not ok:
+            logger.warning("Failed to transition task %s SEND_TO_USER -> FAILED", task_id)
+            await session.rollback()
+            return True
+        await session.commit()
         return True
 
     ok = await repo.transition_task(
@@ -146,8 +156,13 @@ async def _process_one_waiting_user(session: AsyncSession, bot: Bot) -> bool:
     try:
         await bot.send_message(chat_id=chat_id, text=msg)
     except Exception as exc:
-        logger.warning("Failed to send clarify for task %s: %s", task_id, exc)
-        await session.rollback()
+        logger.warning("Failed to send clarify for task %s to chat_id=%s: %s", task_id, chat_id, exc)
+        await repo.insert_task_detail(
+            task_id=task_id,
+            kind="tg_waiting_user_notified",
+            content={"error": str(exc), "worker": CONSUMER_NAME},
+        )
+        await session.commit()
         return True
 
     await repo.insert_task_detail(
