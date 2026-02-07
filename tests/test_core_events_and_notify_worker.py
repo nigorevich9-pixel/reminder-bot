@@ -10,6 +10,7 @@ from sqlalchemy.pool import NullPool
 from app.config.settings import settings
 from app.repositories.core_tasks_repository import CoreTasksRepository
 from app.worker.core_task_notify_worker import (
+    process_core_codegen_notifications,
     process_core_task_notifications,
     process_core_waiting_user_notifications,
 )
@@ -251,4 +252,80 @@ class TestCoreEventsAndNotifyWorker(unittest.IsolatedAsyncioTestCase):
         chat_id, text = bot.sent[0]
         self.assertEqual(chat_id, 54321)
         self.assertIn("Нужно уточнение", text)
+
+    async def test_codegen_result_is_notified_once(self) -> None:
+        bot = _StubBot()
+
+        async with _session() as session:
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO users (tg_id, username, first_name) "
+                    "VALUES (:tg_id, NULL, NULL) "
+                    "ON CONFLICT (tg_id) DO UPDATE SET tg_id = EXCLUDED.tg_id "
+                    "RETURNING id"
+                ),
+                {"tg_id": 9011},
+            )
+            user_id = int(res.scalar_one())
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO tasks (created_by_user_id, project_id, source, external_key, title, status) "
+                    "VALUES (:uid, NULL, 'telegram', NULL, 't_codegen', 'NEEDS_REVIEW') "
+                    "RETURNING id"
+                ),
+                {"uid": user_id},
+            )
+            task_id = int(res.scalar_one())
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'raw_input', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {"kind": "task", "text": "Do X", "tg": {"chat_id": 77777, "tg_id": 9011}, "event_id": 1},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.execute(
+                sa.text(
+                    "INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'codegen_result', CAST(:c AS jsonb))"
+                ),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {
+                            "worker": "core_codegen_worker",
+                            "repo_full_name": "nigorevich9-pixel/reminder-bot",
+                            "base_branch": "main",
+                            "branch_name": "ai/task-1-reminder-bot",
+                            "pr_url": "https://example/pr/42",
+                            "tests": {"ok": True, "exit_code": 0, "output_tail": "OK"},
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.commit()
+
+        async with _session() as session:
+            n1 = await process_core_codegen_notifications(session, bot, limit=5)
+            await session.commit()
+            n2 = await process_core_codegen_notifications(session, bot, limit=5)
+            await session.commit()
+
+            self.assertEqual(n1, 1)
+            self.assertEqual(n2, 0)
+            res = await session.execute(
+                sa.text("SELECT COUNT(1) FROM task_details WHERE task_id = :tid AND kind = 'tg_codegen_notified'"),
+                {"tid": task_id},
+            )
+            self.assertEqual(int(res.scalar_one()), 1)
+
+        self.assertEqual(len(bot.sent), 1)
+        chat_id, text = bot.sent[0]
+        self.assertEqual(chat_id, 77777)
+        self.assertIn("PR:", text)
+        self.assertIn("Tests: OK", text)
 

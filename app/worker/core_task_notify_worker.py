@@ -54,6 +54,31 @@ def _format_clarify_message(*, task_id: int, question: str) -> str:
     )
 
 
+def _format_codegen_message(
+    *,
+    task_id: int,
+    title: str,
+    pr_url: str | None,
+    tests_ok: bool | None,
+    repo_full_name: str | None,
+    branch_name: str | None,
+) -> str:
+    lines = [f"task #{task_id}", f"{title}".strip(), ""]
+    if pr_url:
+        lines.append(f"PR: {pr_url}")
+    if repo_full_name:
+        lines.append(f"Repo: {repo_full_name}")
+    if branch_name:
+        lines.append(f"Branch: {branch_name}")
+    if tests_ok is True:
+        lines.append("Tests: OK")
+    elif tests_ok is False:
+        lines.append("Tests: FAILED")
+    else:
+        lines.append("Tests: (unknown)")
+    return "\n".join([l for l in lines if l is not None]).strip()
+
+
 async def _process_one(session: AsyncSession, bot: Bot) -> bool:
     repo = CoreTasksRepository(session)
     task = await repo.pop_one_task_for_send_to_user()
@@ -174,6 +199,76 @@ async def _process_one_waiting_user(session: AsyncSession, bot: Bot) -> bool:
     return True
 
 
+async def _process_one_codegen_notify(session: AsyncSession, bot: Bot) -> bool:
+    repo = CoreTasksRepository(session)
+    task = await repo.pop_one_task_for_codegen_notify()
+    if not task:
+        return False
+
+    task_id = int(task["id"])
+    raw_input = await repo.get_raw_input(task_id=task_id)
+    codegen_result = await repo.get_latest_codegen_result(task_id=task_id)
+
+    if not raw_input or not codegen_result:
+        await repo.insert_task_detail(
+            task_id=task_id,
+            kind="tg_codegen_notified",
+            content={"error": "missing raw_input/codegen_result", "worker": CONSUMER_NAME},
+        )
+        await session.commit()
+        return True
+
+    chat_id = _extract_chat_id(raw_input)
+    if chat_id is None:
+        await repo.insert_task_detail(
+            task_id=task_id,
+            kind="tg_codegen_notified",
+            content={"error": "missing chat_id", "worker": CONSUMER_NAME},
+        )
+        await session.commit()
+        return True
+
+    pr_url = codegen_result.get("pr_url") if isinstance(codegen_result.get("pr_url"), str) else None
+    repo_full_name = (
+        codegen_result.get("repo_full_name") if isinstance(codegen_result.get("repo_full_name"), str) else None
+    )
+    branch_name = (
+        codegen_result.get("branch_name") if isinstance(codegen_result.get("branch_name"), str) else None
+    )
+    tests_ok = None
+    tests = codegen_result.get("tests")
+    if isinstance(tests, dict) and isinstance(tests.get("ok"), bool):
+        tests_ok = tests.get("ok")
+
+    msg = _format_codegen_message(
+        task_id=task_id,
+        title=str(task.get("title") or ""),
+        pr_url=pr_url,
+        tests_ok=tests_ok,
+        repo_full_name=repo_full_name,
+        branch_name=branch_name,
+    )
+    try:
+        await bot.send_message(chat_id=chat_id, text=msg)
+    except Exception as exc:
+        logger.warning("Failed to send codegen notify for task %s to chat_id=%s: %s", task_id, chat_id, exc)
+        await repo.insert_task_detail(
+            task_id=task_id,
+            kind="tg_codegen_notified",
+            content={"error": str(exc), "worker": CONSUMER_NAME},
+        )
+        await session.commit()
+        return True
+
+    await repo.insert_task_detail(
+        task_id=task_id,
+        kind="tg_codegen_notified",
+        content={"worker": CONSUMER_NAME, "pr_url": pr_url, "tests_ok": tests_ok},
+    )
+    await session.commit()
+    return True
+
+
 async def process_core_task_notifications(session: AsyncSession, bot: Bot, *, limit: int = 10) -> int:
     processed = 0
     for _ in range(max(int(limit), 1)):
@@ -187,6 +282,15 @@ async def process_core_waiting_user_notifications(session: AsyncSession, bot: Bo
     processed = 0
     for _ in range(max(int(limit), 1)):
         if not await _process_one_waiting_user(session, bot):
+            break
+        processed += 1
+    return processed
+
+
+async def process_core_codegen_notifications(session: AsyncSession, bot: Bot, *, limit: int = 10) -> int:
+    processed = 0
+    for _ in range(max(int(limit), 1)):
+        if not await _process_one_codegen_notify(session, bot):
             break
         processed += 1
     return processed
@@ -208,6 +312,10 @@ async def run_loop() -> None:
                 clarify_processed = await process_core_waiting_user_notifications(session, bot, limit=10)
                 if clarify_processed:
                     logger.info("Sent %s core waiting-user notifications", clarify_processed)
+
+                codegen_processed = await process_core_codegen_notifications(session, bot, limit=10)
+                if codegen_processed:
+                    logger.info("Sent %s core codegen notifications", codegen_processed)
             except Exception as exc:
                 logger.exception("Worker error: %s", exc)
         await asyncio.sleep(poll_seconds)
