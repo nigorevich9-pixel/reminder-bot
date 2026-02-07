@@ -1,6 +1,7 @@
 # Reminder Bot — Project Overview
 
 ## Назначение
+я нашла тебя
 Telegram-бот для напоминаний и уведомлений (с поддержкой Jira intake через polling). Проект — первый шаг к оркестратору, где Telegram используется как command center.
 
 ## Основные возможности
