@@ -170,6 +170,19 @@ class CoreTasksRepository:
         row = res.mappings().first()
         return dict(row["content"]) if row and isinstance(row.get("content"), dict) else None
 
+    async def get_latest_codegen_result(self, *, task_id: int) -> dict | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT content "
+                "FROM task_details "
+                "WHERE task_id = :task_id AND kind = 'codegen_result' "
+                "ORDER BY id DESC LIMIT 1"
+            ),
+            {"task_id": task_id},
+        )
+        row = res.mappings().first()
+        return dict(row["content"]) if row and isinstance(row.get("content"), dict) else None
+
     async def get_latest_codegen_job(self, *, task_id: int) -> dict | None:
         res = await self._session.execute(
             sa.text(
@@ -206,6 +219,27 @@ class CoreTasksRepository:
                 "AND NOT EXISTS ("
                 "  SELECT 1 FROM task_details d "
                 "  WHERE d.task_id = t.id AND d.kind = 'tg_waiting_user_notified'"
+                ") "
+                "ORDER BY t.updated_at ASC "
+                "LIMIT 1 "
+                "FOR UPDATE SKIP LOCKED"
+            )
+        )
+        row = res.mappings().first()
+        return dict(row) if row else None
+
+    async def pop_one_task_for_codegen_notify(self) -> dict | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT t.id, t.title, t.status, t.created_at, t.updated_at "
+                "FROM tasks t "
+                "WHERE EXISTS ("
+                "  SELECT 1 FROM task_details d "
+                "  WHERE d.task_id = t.id AND d.kind = 'codegen_result'"
+                ") "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM task_details d "
+                "  WHERE d.task_id = t.id AND d.kind = 'tg_codegen_notified'"
                 ") "
                 "ORDER BY t.updated_at ASC "
                 "LIMIT 1 "

@@ -9,6 +9,7 @@
 - `reminder-worker` также доставляет уведомления по core-задачам:
   - `SEND_TO_USER` → отправка пользователю (вопрос+ответ) → `DONE`
   - `WAITING_USER` → отправка уточняющего вопроса пользователю (one-shot)
+  - `codegen_result` → one-shot уведомление (PR URL + статус тестов)
 
 ## Подключения
 - Postgres URL: `postgresql+asyncpg://reminder_user:reminder_pass@localhost:5432/reminder_db`
