@@ -4,6 +4,7 @@
 
 `reminder-bot` is Telegram UI + reminders. It also acts as UI for `core-orchestrator` tasks (writes `events`, reads task state/results, notifies users).
 
+
 ## Source of truth (within this project)
 
 - `/root/reminder-bot/PROJECT.md`
@@ -29,4 +30,3 @@
 - `/core` sends only `request.kind in {"question","task"}` into `events` (reminders are created via `/new` and stored in reminder tables).
 - Approval gate is effectively `/run <task_id>` (there is also an “auto-run” mode inside `/core` UI).
 - Jira integration exists in the repo, but in the current system roadmap it is considered **deprecated** (do not rely on it as part of end-to-end orchestrator scenarios).
-
