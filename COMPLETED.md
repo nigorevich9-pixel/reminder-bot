@@ -1,5 +1,7 @@
 # Completed Tasks
 
+Note: Jira-related items below are historical; in the current system roadmap Jira is considered deprecated (see `PROJECT.md`).
+
 ## Infrastructure
 - Установлены PostgreSQL 14 и Redis 6
 - Создана база `reminder_db` и пользователь `reminder_user`
