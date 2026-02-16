@@ -11,6 +11,10 @@
   - `WAITING_USER` → отправка уточняющего вопроса пользователю (one-shot)
   - `codegen_result` → one-shot уведомление (PR URL + статус тестов) — реализовано в коде воркера, но **пока не подключено** в основном loop `reminder-worker` (см. `app/worker/core_task_notify_worker.py` и `app/worker/runner.py`).
 
+Примечания по совместимости с machine review в core:
+- При `SEND_TO_USER` бот отправляет пользователю **writer-ответ** и игнорирует `llm_result` от ревьюеров (`purpose=question_review`, `purpose=review_loop`).
+- При `WAITING_USER` бот берёт вопрос из `llm_result.clarify_question`, а если его нет — из `waiting_user_reason.question` (это важно для review clarify).
+
 ## Подключения
 - Postgres URL: `postgresql+asyncpg://reminder_user:reminder_pass@localhost:5432/reminder_db`
 - Redis URL: `redis://localhost:6379/0`

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -42,6 +43,13 @@ def _extract_clarify_question(llm_result: dict) -> str | None:
     return q.strip() if isinstance(q, str) and q.strip() else None
 
 
+def _extract_waiting_reason_question(waiting_reason: dict | None) -> str | None:
+    if not isinstance(waiting_reason, dict):
+        return None
+    q = waiting_reason.get("question")
+    return q.strip() if isinstance(q, str) and q.strip() else None
+
+
 def _format_message(*, task_id: int, question: str, answer: str) -> str:
     return f"task #{task_id}\n\nВопрос:\n{question}\n\nОтвет:\n{answer}"
 
@@ -77,6 +85,51 @@ def _format_codegen_message(
     else:
         lines.append("Tests: (unknown)")
     return "\n".join([l for l in lines if l is not None]).strip()
+
+def _strip_markdown_fences(text: str) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return raw
+    if not raw.startswith("```"):
+        return raw
+    lines = raw.splitlines()
+    if len(lines) >= 2 and lines[0].startswith("```"):
+        lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        raw = "\n".join(lines).strip()
+    return raw
+
+def _extract_json_answer(raw_answer: str | None) -> str | None:
+    if raw_answer is None:
+        return None
+    raw = _strip_markdown_fences(raw_answer)
+    if not raw:
+        return None
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return raw
+    if isinstance(obj, dict) and isinstance(obj.get("answer"), str) and obj.get("answer").strip():
+        return obj.get("answer").strip()
+    return raw
+
+def _format_needs_review_message(
+    *,
+    task_id: int,
+    answer: str | None,
+    llm_error: str | None,
+    pr_url: str | None,
+    pr_error: str | None,
+) -> str:
+    lines = [f"task #{task_id}", "", "NEEDS_REVIEW"]
+    if answer:
+        lines.extend(["", "answer:", answer])
+    if llm_error:
+        lines.extend(["", "llm_error:", llm_error])
+    if pr_url and pr_error:
+        lines.extend(["", "pr_url:", pr_url, "", "pr_error:", pr_error])
+    return "\n".join(lines).strip()
 
 
 async def _process_one(session: AsyncSession, bot: Bot) -> bool:
@@ -146,6 +199,92 @@ async def _process_one(session: AsyncSession, bot: Bot) -> bool:
     return True
 
 
+async def _process_one_needs_review(session: AsyncSession, bot: Bot) -> bool:
+    repo = CoreTasksRepository(session)
+    task = await repo.pop_one_task_for_needs_review_notify()
+    if not task:
+        return False
+
+    task_id = int(task["id"])
+    transition_id = task.get("transition_id")
+    transition_id = int(transition_id) if isinstance(transition_id, int) else None
+
+    raw_input = await repo.get_raw_input(task_id=task_id)
+    llm_result = await repo.get_latest_llm_result(task_id=task_id)
+
+    chat_id = _extract_chat_id(raw_input or {})
+    if chat_id is None or transition_id is None:
+        await repo.insert_task_detail(
+            task_id=task_id,
+            kind="tg_needs_review_notified",
+            content={
+                "worker": CONSUMER_NAME,
+                "transition_id": transition_id,
+                "error": "missing chat_id/transition_id",
+            },
+        )
+        await session.commit()
+        return True
+
+    llm_request_id = None
+    if isinstance(llm_result, dict) and isinstance(llm_result.get("llm_request_id"), int):
+        llm_request_id = int(llm_result.get("llm_request_id"))
+
+    llm_response = await repo.get_latest_llm_response_by_request_id(llm_request_id=llm_request_id) if llm_request_id else None
+    llm_response_id = llm_response.get("id") if isinstance(llm_response, dict) else None
+    llm_response_id = int(llm_response_id) if isinstance(llm_response_id, int) else None
+    raw_answer = llm_response.get("answer") if isinstance(llm_response, dict) else None
+    answer = _extract_json_answer(raw_answer if isinstance(raw_answer, str) else None)
+
+    llm_error = llm_response.get("error") if isinstance(llm_response, dict) else None
+    llm_error = llm_error.strip() if isinstance(llm_error, str) and llm_error.strip() else None
+
+    pr_url = None
+    pr_error = None
+    job = await repo.get_latest_codegen_job(task_id=task_id)
+    if isinstance(job, dict):
+        pr_url = job.get("pr_url") if isinstance(job.get("pr_url"), str) and job.get("pr_url").strip() else None
+        pr_error = job.get("error") if isinstance(job.get("error"), str) and job.get("error").strip() else None
+
+    msg = _format_needs_review_message(
+        task_id=task_id,
+        answer=answer,
+        llm_error=llm_error,
+        pr_url=pr_url,
+        pr_error=pr_error,
+    )
+    try:
+        await bot.send_message(chat_id=chat_id, text=msg)
+    except Exception as exc:
+        logger.warning("Failed to send needs_review for task %s to chat_id=%s: %s", task_id, chat_id, exc)
+        await repo.insert_task_detail(
+            task_id=task_id,
+            kind="tg_needs_review_notified",
+            content={
+                "worker": CONSUMER_NAME,
+                "transition_id": transition_id,
+                "llm_request_id": llm_request_id,
+                "llm_response_id": llm_response_id,
+                "error": str(exc),
+            },
+        )
+        await session.commit()
+        return True
+
+    await repo.insert_task_detail(
+        task_id=task_id,
+        kind="tg_needs_review_notified",
+        content={
+            "worker": CONSUMER_NAME,
+            "transition_id": transition_id,
+            "llm_request_id": llm_request_id,
+            "llm_response_id": llm_response_id,
+        },
+    )
+    await session.commit()
+    return True
+
+
 async def _process_one_waiting_user(session: AsyncSession, bot: Bot) -> bool:
     repo = CoreTasksRepository(session)
     task = await repo.pop_one_task_for_waiting_user_notify()
@@ -155,18 +294,19 @@ async def _process_one_waiting_user(session: AsyncSession, bot: Bot) -> bool:
     task_id = int(task["id"])
     raw_input = await repo.get_raw_input(task_id=task_id)
     llm_result = await repo.get_latest_llm_result(task_id=task_id)
+    waiting_reason = await repo.get_latest_waiting_user_reason(task_id=task_id)
 
-    if not raw_input or not llm_result:
+    if not raw_input or (not llm_result and not waiting_reason):
         await repo.insert_task_detail(
             task_id=task_id,
             kind="tg_waiting_user_notified",
-            content={"error": "missing raw_input/llm_result", "worker": CONSUMER_NAME},
+            content={"error": "missing raw_input/llm_result/waiting_user_reason", "worker": CONSUMER_NAME},
         )
         await session.commit()
         return True
 
     chat_id = _extract_chat_id(raw_input)
-    question = _extract_clarify_question(llm_result)
+    question = _extract_clarify_question(llm_result or {}) or _extract_waiting_reason_question(waiting_reason)
 
     if chat_id is None or question is None:
         await repo.insert_task_detail(
@@ -296,6 +436,15 @@ async def process_core_codegen_notifications(session: AsyncSession, bot: Bot, *,
     return processed
 
 
+async def process_core_needs_review_notifications(session: AsyncSession, bot: Bot, *, limit: int = 10) -> int:
+    processed = 0
+    for _ in range(max(int(limit), 1)):
+        if not await _process_one_needs_review(session, bot):
+            break
+        processed += 1
+    return processed
+
+
 async def run_loop() -> None:
     if not settings.tg_token:
         raise RuntimeError("TG_TOKEN is not set")
@@ -316,6 +465,10 @@ async def run_loop() -> None:
                 codegen_processed = await process_core_codegen_notifications(session, bot, limit=10)
                 if codegen_processed:
                     logger.info("Sent %s core codegen notifications", codegen_processed)
+
+                needs_review_processed = await process_core_needs_review_notifications(session, bot, limit=10)
+                if needs_review_processed:
+                    logger.info("Sent %s core needs-review notifications", needs_review_processed)
             except Exception as exc:
                 logger.exception("Worker error: %s", exc)
         await asyncio.sleep(poll_seconds)

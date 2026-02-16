@@ -102,7 +102,9 @@
 
 ### 3) Доставка результата “вопроса” (core → Telegram)
 - Когда core переводит задачу в `SEND_TO_USER`, воркер `reminder-worker` отправляет пользователю сообщение вида “Вопрос/Ответ” и переводит задачу в `DONE`.
+  - Важно: бот берёт **writer-ответ**, а не результаты ревьюеров. Он игнорирует `task_details(kind=llm_result)` с `purpose in ('question_review','review_loop')` и берёт последний `llm_result` где `purpose` пустой/NULL или один из `json_retry`, `question_rework`, `question_review_limit`.
 - Когда core переводит задачу в `WAITING_USER`, воркер отправляет one-shot сообщение “Нужно уточнение” и подсказывает `/ask <task_id> ...`.
+  - Если в `llm_result` нет `clarify_question` (например, clarify пришёл из machine review), бот берёт вопрос из `task_details(kind=waiting_user_reason).content.question`.
 
 ## Что есть / чего не хватает (относительно roadmap core)
 - **Есть**: approval gate через `/run` (+ опционально auto-run), запись `events`, просмотр `tasks`/`task_details`, авто-доставка `SEND_TO_USER`, one-shot уведомление `WAITING_USER`.
