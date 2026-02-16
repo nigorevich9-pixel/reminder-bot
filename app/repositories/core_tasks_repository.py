@@ -163,6 +163,20 @@ class CoreTasksRepository:
                 "SELECT content "
                 "FROM task_details "
                 "WHERE task_id = :task_id AND kind = 'llm_result' "
+                "AND (content->>'purpose' IS NULL OR content->>'purpose' IN ('', 'json_retry', 'question_rework', 'question_review_limit')) "
+                "ORDER BY id DESC LIMIT 1"
+            ),
+            {"task_id": task_id},
+        )
+        row = res.mappings().first()
+        return dict(row["content"]) if row and isinstance(row.get("content"), dict) else None
+
+    async def get_latest_waiting_user_reason(self, *, task_id: int) -> dict | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT content "
+                "FROM task_details "
+                "WHERE task_id = :task_id AND kind = 'waiting_user_reason' "
                 "ORDER BY id DESC LIMIT 1"
             ),
             {"task_id": task_id},

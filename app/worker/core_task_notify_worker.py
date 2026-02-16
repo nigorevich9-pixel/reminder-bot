@@ -43,6 +43,13 @@ def _extract_clarify_question(llm_result: dict) -> str | None:
     return q.strip() if isinstance(q, str) and q.strip() else None
 
 
+def _extract_waiting_reason_question(waiting_reason: dict | None) -> str | None:
+    if not isinstance(waiting_reason, dict):
+        return None
+    q = waiting_reason.get("question")
+    return q.strip() if isinstance(q, str) and q.strip() else None
+
+
 def _format_message(*, task_id: int, question: str, answer: str) -> str:
     return f"task #{task_id}\n\nВопрос:\n{question}\n\nОтвет:\n{answer}"
 
@@ -287,18 +294,19 @@ async def _process_one_waiting_user(session: AsyncSession, bot: Bot) -> bool:
     task_id = int(task["id"])
     raw_input = await repo.get_raw_input(task_id=task_id)
     llm_result = await repo.get_latest_llm_result(task_id=task_id)
+    waiting_reason = await repo.get_latest_waiting_user_reason(task_id=task_id)
 
-    if not raw_input or not llm_result:
+    if not raw_input or (not llm_result and not waiting_reason):
         await repo.insert_task_detail(
             task_id=task_id,
             kind="tg_waiting_user_notified",
-            content={"error": "missing raw_input/llm_result", "worker": CONSUMER_NAME},
+            content={"error": "missing raw_input/llm_result/waiting_user_reason", "worker": CONSUMER_NAME},
         )
         await session.commit()
         return True
 
     chat_id = _extract_chat_id(raw_input)
-    question = _extract_clarify_question(llm_result)
+    question = _extract_clarify_question(llm_result or {}) or _extract_waiting_reason_question(waiting_reason)
 
     if chat_id is None or question is None:
         await repo.insert_task_detail(
