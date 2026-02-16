@@ -86,6 +86,29 @@ def _format_codegen_message(
         lines.append("Tests: (unknown)")
     return "\n".join([l for l in lines if l is not None]).strip()
 
+def _format_llm_requeue_message(
+    *,
+    task_id: int,
+    llm_request_id: int | None,
+    requeue_count: int | None,
+    locked_by: str | None,
+    correlation_id: str | None,
+) -> str:
+    lines = [
+        f"task #{task_id}",
+        "",
+        "LLM: запрос не получил ответ вовремя и переотправлен.",
+    ]
+    if llm_request_id is not None:
+        lines.append(f"llm_request_id: {llm_request_id}")
+    if requeue_count is not None:
+        lines.append(f"requeue_count: {requeue_count}")
+    if locked_by:
+        lines.append(f"locked_by: {locked_by}")
+    if correlation_id:
+        lines.append(f"correlation_id: {correlation_id}")
+    return "\n".join(lines).strip()
+
 def _strip_markdown_fences(text: str) -> str:
     raw = (text or "").strip()
     if not raw:
@@ -284,6 +307,83 @@ async def _process_one_needs_review(session: AsyncSession, bot: Bot) -> bool:
     await session.commit()
     return True
 
+async def _process_one_llm_requeue_notify(session: AsyncSession, bot: Bot) -> bool:
+    repo = CoreTasksRepository(session)
+    task = await repo.pop_one_task_for_llm_requeue_notify()
+    if not task:
+        return False
+
+    task_id = int(task["id"])
+    raw_input = await repo.get_raw_input(task_id=task_id)
+    chat_id = _extract_chat_id(raw_input or {})
+    requeue_detail = task.get("requeue_detail") if isinstance(task, dict) else None
+    requeue_detail = requeue_detail if isinstance(requeue_detail, dict) else {}
+
+    llm_request_id = requeue_detail.get("llm_request_id")
+    llm_request_id = int(llm_request_id) if isinstance(llm_request_id, int) else None
+
+    requeue_count = requeue_detail.get("requeue_count")
+    requeue_count = int(requeue_count) if isinstance(requeue_count, int) else None
+
+    locked_by = requeue_detail.get("locked_by")
+    locked_by = locked_by.strip() if isinstance(locked_by, str) and locked_by.strip() else None
+
+    correlation_id = requeue_detail.get("correlation_id")
+    correlation_id = (
+        correlation_id.strip() if isinstance(correlation_id, str) and correlation_id.strip() else None
+    )
+
+    if chat_id is None or llm_request_id is None:
+        await repo.insert_task_detail(
+            task_id=task_id,
+            kind="tg_llm_requeue_notified",
+            content={
+                "worker": CONSUMER_NAME,
+                "llm_request_id": llm_request_id,
+                "error": "missing chat_id/llm_request_id",
+            },
+        )
+        await session.commit()
+        return True
+
+    msg = _format_llm_requeue_message(
+        task_id=task_id,
+        llm_request_id=llm_request_id,
+        requeue_count=requeue_count,
+        locked_by=locked_by,
+        correlation_id=correlation_id,
+    )
+    try:
+        await bot.send_message(chat_id=chat_id, text=msg)
+    except Exception as exc:
+        logger.warning("Failed to send llm requeue for task %s to chat_id=%s: %s", task_id, chat_id, exc)
+        await repo.insert_task_detail(
+            task_id=task_id,
+            kind="tg_llm_requeue_notified",
+            content={
+                "worker": CONSUMER_NAME,
+                "llm_request_id": llm_request_id,
+                "requeue_count": requeue_count,
+                "correlation_id": correlation_id,
+                "error": str(exc),
+            },
+        )
+        await session.commit()
+        return True
+
+    await repo.insert_task_detail(
+        task_id=task_id,
+        kind="tg_llm_requeue_notified",
+        content={
+            "worker": CONSUMER_NAME,
+            "llm_request_id": llm_request_id,
+            "requeue_count": requeue_count,
+            "correlation_id": correlation_id,
+        },
+    )
+    await session.commit()
+    return True
+
 
 async def _process_one_waiting_user(session: AsyncSession, bot: Bot) -> bool:
     repo = CoreTasksRepository(session)
@@ -469,6 +569,14 @@ async def run_loop() -> None:
                 needs_review_processed = await process_core_needs_review_notifications(session, bot, limit=10)
                 if needs_review_processed:
                     logger.info("Sent %s core needs-review notifications", needs_review_processed)
+
+                requeue_processed = 0
+                for _ in range(10):
+                    if not await _process_one_llm_requeue_notify(session, bot):
+                        break
+                    requeue_processed += 1
+                if requeue_processed:
+                    logger.info("Sent %s core llm-requeue notifications", requeue_processed)
             except Exception as exc:
                 logger.exception("Worker error: %s", exc)
         await asyncio.sleep(poll_seconds)

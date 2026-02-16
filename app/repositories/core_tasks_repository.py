@@ -293,6 +293,38 @@ class CoreTasksRepository:
         row = res.mappings().first()
         return dict(row) if row else None
 
+    async def pop_one_task_for_llm_requeue_notify(self) -> dict | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT t.id, t.title, t.status, t.created_at, t.updated_at, d.content AS requeue_detail "
+                "FROM tasks t "
+                "JOIN LATERAL ("
+                "  SELECT content "
+                "  FROM task_details "
+                "  WHERE task_id = t.id AND kind = 'llm_request_requeued' "
+                "  ORDER BY id DESC "
+                "  LIMIT 1"
+                ") d ON true "
+                "WHERE t.status IN ('RUNNING', 'NEEDS_LLM_REVIEW') "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM task_details n "
+                "  WHERE n.task_id = t.id "
+                "    AND n.kind = 'tg_llm_requeue_notified' "
+                "    AND n.content->>'llm_request_id' = d.content->>'llm_request_id'"
+                ") "
+                "ORDER BY t.updated_at ASC "
+                "LIMIT 1 "
+                "FOR UPDATE SKIP LOCKED"
+            )
+        )
+        row = res.mappings().first()
+        if not row:
+            return None
+        out = dict(row)
+        rd = out.get("requeue_detail")
+        out["requeue_detail"] = dict(rd) if isinstance(rd, dict) else None
+        return out
+
     async def get_latest_llm_response_by_request_id(self, *, llm_request_id: int) -> dict | None:
         res = await self._session.execute(
             sa.text(
