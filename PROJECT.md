@@ -111,7 +111,7 @@
 - **Не хватает (актуально сейчас)**:
   - Явной команды “approve” (по сути её роль сейчас выполняет `/run`).
   - `/core` не поддерживает `request.kind=reminder` (и не должен: reminders и tasks/questions — разные сущности; reminders живут отдельно и не создают `tasks`).
-  - Уведомления о `codegen_result` реализованы в коде воркера, но в `reminder-worker` по умолчанию не включены (нужно подключить `process_core_codegen_notifications()` или выделить отдельный unit).
+  - Уведомления о `codegen_result` включены в `reminder-worker` (через `process_core_codegen_notifications()`).
 
 ## Jira (deprecated)
 В репозитории есть код, миграции и воркер для Jira (`/jira_*`, `jira-worker`), но в рамках текущего roadmap системы Jira **не используется** и не является частью сквозных сценариев оркестратора.
