@@ -36,8 +36,8 @@
 ## Осталось сделать (общие)
 - Персистентные таймзоны пользователей (если понадобится)
 - Доп. очистка/архивирование старых уведомлений
-- По мере взросления: вынести orchestration-задачи (tasks/events/llm_requests/codegen) в `core-orchestrator` и оставить этот проект как UI+reminders
-- Подключить уведомления по `codegen_result` (либо в `reminder-worker`, либо выделенным отдельным worker unit), если этот UX нужен в Telegram.
+- Orchestration-задачи (tasks/events/llm_requests/codegen) считаем зоной ответственности `core-orchestrator`; этот проект держим как UI+reminders (+ нотификации).
+- Подключить уведомления по `codegen_result` (либо в `reminder-worker`, либо выделенным отдельным worker unit), если этот UX нужен в Telegram (см. `/root/docs/roadmap.md`, Этап 2.5).
 
 ## Примечание про `events`
 - `events` — shared inbox. В ней включены idempotency индексы (`source+external_id`, `payload_hash`).
