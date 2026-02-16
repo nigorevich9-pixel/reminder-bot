@@ -249,6 +249,49 @@ class CoreTasksRepository:
         row = res.mappings().first()
         return dict(row) if row else None
 
+    async def pop_one_task_for_needs_review_notify(self) -> dict | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT t.id, t.title, t.status, t.created_at, t.updated_at, tr.transition_id "
+                "FROM tasks t "
+                "JOIN LATERAL ("
+                "  SELECT id AS transition_id "
+                "  FROM task_transitions "
+                "  WHERE task_id = t.id AND to_status = 'NEEDS_REVIEW' "
+                "  ORDER BY id DESC "
+                "  LIMIT 1"
+                ") tr ON true "
+                "WHERE t.status = 'NEEDS_REVIEW' "
+                "AND EXISTS ("
+                "  SELECT 1 FROM task_details d "
+                "  WHERE d.task_id = t.id AND d.kind = 'raw_input' AND d.content->>'kind' = 'question'"
+                ") "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM task_details d "
+                "  WHERE d.task_id = t.id AND d.kind = 'tg_needs_review_notified' "
+                "  AND CAST(d.content->>'transition_id' AS int) = tr.transition_id"
+                ") "
+                "ORDER BY tr.transition_id ASC "
+                "LIMIT 1 "
+                "FOR UPDATE SKIP LOCKED"
+            )
+        )
+        row = res.mappings().first()
+        return dict(row) if row else None
+
+    async def get_latest_llm_response_by_request_id(self, *, llm_request_id: int) -> dict | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT id, llm_request_id, task_id, backend, model, answer, error, created_at "
+                "FROM llm_responses "
+                "WHERE llm_request_id = :rid "
+                "ORDER BY id DESC LIMIT 1"
+            ),
+            {"rid": int(llm_request_id)},
+        )
+        row = res.mappings().first()
+        return dict(row) if row else None
+
     async def insert_task_detail(self, *, task_id: int, kind: str, content: dict) -> int:
         res = await self._session.execute(
             sa.text(
