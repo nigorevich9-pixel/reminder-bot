@@ -177,7 +177,7 @@ async def start_handler(message: Message, session: AsyncSession):
         "/tasks — список твоих задач\n"
         "/run <task_id> — запустить задачу/вопрос\n"
         "/hold <task_id> — приостановить (пока логируем)\n"
-        "/ask <task_id> <text> — задать уточнение (пока логируем)\n"
+        "/ask <task_id> <text> — ответить на уточняющий вопрос LLM\n"
         "/cancel — отменить создание"
     )
 
@@ -498,12 +498,12 @@ async def hold_task_handler(message: Message, session: AsyncSession):
 @router.message(Command("ask"))
 async def ask_task_handler(message: Message, session: AsyncSession):
     args = (message.text or "").split(maxsplit=2)
-    if len(args) < 2 or not args[1].strip().isdigit():
+    if len(args) < 3 or not args[1].strip().isdigit() or not args[2].strip():
         await message.answer("Использование: /ask <task_id> <text>")
         return
     task_id = int(args[1].strip())
-    text = args[2].strip() if len(args) >= 3 else ""
-    await _insert_core_command(session, message, name="ask", task_id=task_id, text=text or None)
+    text = args[2].strip()
+    await _insert_core_command(session, message, name="ask", task_id=task_id, text=text)
     await session.commit()
     await message.answer(f"Ок. Отправил ask для task #{task_id}.")
 
