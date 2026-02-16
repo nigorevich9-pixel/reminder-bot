@@ -359,15 +359,21 @@ class CoreTasksRepository:
     ) -> bool:
         res = await self._session.execute(
             sa.text(
-                "WITH updated AS ("
+                "WITH sys AS ("
+                "  INSERT INTO users (tg_id, username, first_name) "
+                "  VALUES (0, 'system', 'system') "
+                "  ON CONFLICT (tg_id) DO UPDATE SET username = EXCLUDED.username, first_name = EXCLUDED.first_name "
+                "  RETURNING id"
+                "), "
+                "updated AS ("
                 "  UPDATE tasks "
                 "  SET status = :to_status, updated_at = now() "
                 "  WHERE id = :task_id AND status = :from_status "
                 "  RETURNING id"
                 ") "
                 "INSERT INTO task_transitions (task_id, from_status, to_status, actor_user_id, reason) "
-                "SELECT id, :from_status, :to_status, NULL, :reason "
-                "FROM updated "
+                "SELECT updated.id, :from_status, :to_status, sys.id, :reason "
+                "FROM updated, sys "
                 "RETURNING task_id"
             ),
             {
