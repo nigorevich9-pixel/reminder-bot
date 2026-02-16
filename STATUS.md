@@ -9,7 +9,7 @@
 - `reminder-worker` также доставляет уведомления по core-задачам:
   - `SEND_TO_USER` → отправка пользователю (вопрос+ответ) → `DONE`
   - `WAITING_USER` → отправка уточняющего вопроса пользователю (one-shot)
-  - `codegen_result` → one-shot уведомление (PR URL + статус тестов) — реализовано в коде воркера, но **пока не подключено** в основном loop `reminder-worker` (см. `app/worker/core_task_notify_worker.py` и `app/worker/runner.py`).
+  - `codegen_result` → one-shot уведомление (PR URL + статус тестов) — подключено в основном loop `reminder-worker` (см. `app/worker/core_task_notify_worker.py` и `app/worker/runner.py`).
 
 Примечания по совместимости с machine review в core:
 - При `SEND_TO_USER` бот отправляет пользователю **writer-ответ** и игнорирует `llm_result` от ревьюеров (`purpose=question_review`, `purpose=review_loop`).
@@ -37,7 +37,6 @@
 - Персистентные таймзоны пользователей (если понадобится)
 - Доп. очистка/архивирование старых уведомлений
 - Orchestration-задачи (tasks/events/llm_requests/codegen) считаем зоной ответственности `core-orchestrator`; этот проект держим как UI+reminders (+ нотификации).
-- Подключить уведомления по `codegen_result` (либо в `reminder-worker`, либо выделенным отдельным worker unit), если этот UX нужен в Telegram (см. `/root/docs/roadmap.md`, Этап 2.5).
 
 ## Примечание про `events`
 - `events` — shared inbox. В ней включены idempotency индексы (`source+external_id`, `payload_hash`).

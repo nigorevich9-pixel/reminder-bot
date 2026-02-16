@@ -10,6 +10,7 @@ from app.db import AsyncSessionLocal
 from app.repositories.reminder_repository import ReminderRepository
 from app.worker.core_task_notify_worker import (
     process_core_task_notifications,
+    process_core_codegen_notifications,
     process_core_needs_review_notifications,
     process_core_waiting_user_notifications,
 )
@@ -75,6 +76,9 @@ async def run_loop() -> None:
                 needs_review = await process_core_needs_review_notifications(session, bot, limit=20)
                 if needs_review:
                     logger.info("Sent %s core needs-review notifications", needs_review)
+                codegen_notified = await process_core_codegen_notifications(session, bot, limit=20)
+                if codegen_notified:
+                    logger.info("Sent %s core codegen notifications", codegen_notified)
             except Exception as exc:
                 logger.exception("Worker error: %s", exc)
         await asyncio.sleep(settings.worker_poll_seconds)
