@@ -4,6 +4,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${repo_root}"
 
+echo "[completed] check change note"
+./scripts/check_completed_note.sh
+
 DATABASE_URL="${DATABASE_URL:-}"
 if [[ -z "${DATABASE_URL}" ]]; then
   echo "ERROR: DATABASE_URL is required (must point to a *_test database)." >&2
