@@ -44,6 +44,10 @@ class CoreTasksRepository:
         tg_id = _payload_get_int(payload, "tg", "tg_id")
         chat_id = _payload_get_int(payload, "tg", "chat_id")
         request_kind = _payload_get_str(payload, "request", "kind")
+        if request_kind is None:
+            # For user_command events we denormalize command.name into request_kind
+            # so filtering/grouping by kind works for both user_request and user_command.
+            request_kind = _payload_get_str(payload, "command", "name")
 
         res = await self._session.execute(
             sa.text(
