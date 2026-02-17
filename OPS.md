@@ -1,6 +1,6 @@
 # Ops / runbook (reminder-bot)
 
-System-level ops map lives in `/root/docs/ops_and_observability.md`.
+System-level ops map lives in `/root/server-docs/docs/ops.md`.
 
 ## Services (systemd on VDS)
 

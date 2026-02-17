@@ -1,6 +1,6 @@
 # Security notes (reminder-bot)
 
-Baseline (system-level): `/root/docs/security.md`.
+Baseline (system-level): `/root/server-docs/docs/security.md`.
 
 ## Secrets
 
