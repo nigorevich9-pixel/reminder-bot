@@ -13,6 +13,7 @@ Important: `DATABASE_URL` must point to a `*_test` DB on `localhost`/`127.0.0.1`
 
 - Project overview: `PROJECT.md`
 - Current status: `STATUS.md`
+- Config: `CONFIG.md`
 - How to run tests: `TESTS.md`
 - Ops runbook: `OPS.md`
 - Security notes: `SECURITY.md`
