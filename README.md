@@ -18,5 +18,5 @@ Important: `DATABASE_URL` must point to a `*_test` DB on `localhost`/`127.0.0.1`
 - Security notes: `SECURITY.md`
 - AI notes: `AI.md`
 
-System-level map (how projects connect): `/root/docs/index.md`.
+System-level map (how projects connect): `/root/server-docs/docs/README.md`.
 
