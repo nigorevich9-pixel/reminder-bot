@@ -395,12 +395,19 @@ async def _process_one_waiting_user(session: AsyncSession, bot: Bot) -> bool:
     raw_input = await repo.get_raw_input(task_id=task_id)
     llm_result = await repo.get_latest_llm_result(task_id=task_id)
     waiting_reason = await repo.get_latest_waiting_user_reason(task_id=task_id)
+    active_llm_request_id = task.get("active_llm_request_id")
+    if isinstance(active_llm_request_id, str) and active_llm_request_id.strip().isdigit():
+        active_llm_request_id = int(active_llm_request_id.strip())
 
     if not raw_input or (not llm_result and not waiting_reason):
         await repo.insert_task_detail(
             task_id=task_id,
             kind="tg_waiting_user_notified",
-            content={"error": "missing raw_input/llm_result/waiting_user_reason", "worker": CONSUMER_NAME},
+            content={
+                "error": "missing raw_input/llm_result/waiting_user_reason",
+                "worker": CONSUMER_NAME,
+                "llm_request_id": active_llm_request_id,
+            },
         )
         await session.commit()
         return True
@@ -412,7 +419,11 @@ async def _process_one_waiting_user(session: AsyncSession, bot: Bot) -> bool:
         await repo.insert_task_detail(
             task_id=task_id,
             kind="tg_waiting_user_notified",
-            content={"error": "missing chat_id/clarify_question", "worker": CONSUMER_NAME},
+            content={
+                "error": "missing chat_id/clarify_question",
+                "worker": CONSUMER_NAME,
+                "llm_request_id": active_llm_request_id,
+            },
         )
         await session.commit()
         return True
@@ -425,7 +436,7 @@ async def _process_one_waiting_user(session: AsyncSession, bot: Bot) -> bool:
         await repo.insert_task_detail(
             task_id=task_id,
             kind="tg_waiting_user_notified",
-            content={"error": str(exc), "worker": CONSUMER_NAME},
+            content={"error": str(exc), "worker": CONSUMER_NAME, "llm_request_id": active_llm_request_id},
         )
         await session.commit()
         return True
@@ -433,7 +444,7 @@ async def _process_one_waiting_user(session: AsyncSession, bot: Bot) -> bool:
     await repo.insert_task_detail(
         task_id=task_id,
         kind="tg_waiting_user_notified",
-        content={"worker": CONSUMER_NAME},
+        content={"worker": CONSUMER_NAME, "llm_request_id": active_llm_request_id},
     )
     await session.commit()
     return True
