@@ -333,6 +333,96 @@ class TestCoreEventsAndNotifyWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chat_id, 54321)
         self.assertIn("Нужно уточнение", text)
 
+    async def test_waiting_user_is_notified_again_when_new_clarify_happens(self) -> None:
+        bot = _StubBot()
+
+        async with _session() as session:
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO users (tg_id, username, first_name) "
+                    "VALUES (:tg_id, NULL, NULL) "
+                    "ON CONFLICT (tg_id) DO UPDATE SET tg_id = EXCLUDED.tg_id "
+                    "RETURNING id"
+                ),
+                {"tg_id": 9010},
+            )
+            user_id = int(res.scalar_one())
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO tasks (created_by_user_id, project_id, source, external_key, title, status) "
+                    "VALUES (:uid, NULL, 'telegram', NULL, 'q_wait_2', 'WAITING_USER') "
+                    "RETURNING id"
+                ),
+                {"uid": user_id},
+            )
+            task_id = int(res.scalar_one())
+
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'raw_input', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {"kind": "question", "text": "Hi", "tg": {"chat_id": 11111, "tg_id": 9010}, "event_id": 1},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'llm_result', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {"llm_request_id": 10, "answer": None, "clarify_question": "Clarify #1?", "json_invalid": False},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.commit()
+
+        async with _session() as session:
+            n1 = await process_core_waiting_user_notifications(session, bot, limit=5)
+            await session.commit()
+            self.assertEqual(n1, 1)
+
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'llm_result', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {"llm_request_id": 11, "answer": None, "clarify_question": "Clarify #2?", "json_invalid": False},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.commit()
+
+        async with _session() as session:
+            n2 = await process_core_waiting_user_notifications(session, bot, limit=5)
+            await session.commit()
+            self.assertEqual(n2, 1)
+
+            res = await session.execute(
+                sa.text(
+                    "SELECT content->>'llm_request_id' "
+                    "FROM task_details "
+                    "WHERE task_id = :tid AND kind = 'tg_waiting_user_notified' "
+                    "ORDER BY id ASC"
+                ),
+                {"tid": task_id},
+            )
+            got = [r[0] for r in res.all()]
+            self.assertEqual(got, ["10", "11"])
+
+        self.assertEqual(len(bot.sent), 2)
+        self.assertEqual(bot.sent[0][0], 11111)
+        self.assertIn("Clarify #1?", bot.sent[0][1])
+        self.assertEqual(bot.sent[1][0], 11111)
+        self.assertIn("Clarify #2?", bot.sent[1][1])
+
     async def test_waiting_user_uses_waiting_user_reason_when_llm_result_missing(self) -> None:
         bot = _StubBot()
 

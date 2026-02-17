@@ -231,16 +231,31 @@ class CoreTasksRepository:
     async def pop_one_task_for_waiting_user_notify(self) -> dict | None:
         res = await self._session.execute(
             sa.text(
-                "SELECT t.id, t.title, t.status, t.created_at, t.updated_at "
+                "SELECT t.id, t.title, t.status, t.created_at, t.updated_at, "
+                "  COALESCE(lr.llm_request_id, wr.llm_request_id) AS active_llm_request_id "
                 "FROM tasks t "
+                "LEFT JOIN LATERAL ("
+                "  SELECT CAST(content->>'llm_request_id' AS int) AS llm_request_id "
+                "  FROM task_details "
+                "  WHERE task_id = t.id AND kind = 'llm_result' "
+                "  ORDER BY id DESC LIMIT 1"
+                ") lr ON true "
+                "LEFT JOIN LATERAL ("
+                "  SELECT CAST(content->>'llm_request_id' AS int) AS llm_request_id "
+                "  FROM task_details "
+                "  WHERE task_id = t.id AND kind = 'waiting_user_reason' "
+                "  ORDER BY id DESC LIMIT 1"
+                ") wr ON true "
                 "WHERE t.status = 'WAITING_USER' "
+                "AND COALESCE(lr.llm_request_id, wr.llm_request_id) IS NOT NULL "
                 "AND NOT EXISTS ("
                 "  SELECT 1 FROM task_details d "
-                "  WHERE d.task_id = t.id AND d.kind = 'tg_waiting_user_notified'"
+                "  WHERE d.task_id = t.id AND d.kind = 'tg_waiting_user_notified' "
+                "    AND d.content->>'llm_request_id' = CAST(COALESCE(lr.llm_request_id, wr.llm_request_id) AS text)"
                 ") "
                 "ORDER BY t.updated_at ASC "
                 "LIMIT 1 "
-                "FOR UPDATE SKIP LOCKED"
+                "FOR UPDATE OF t SKIP LOCKED"
             )
         )
         row = res.mappings().first()
