@@ -9,11 +9,11 @@ Important: `DATABASE_URL` must point to a `*_test` DB on `localhost`/`127.0.0.1`
 
 ## Docs
 
-Project docs standard (Stage 0): `/root/docs/docs_standard.md`.
+Project docs standard (system-level): `/root/server-docs/docs/README.md`.
 
 When changing behavior/contracts, update docs together with code:
 - `PROJECT.md` / `STATUS.md` / `TESTS.md`
-- system-level `/root/docs/*` (only if it’s about cross-project behavior)
+- system-level `/root/server-docs/docs/*` (only if it’s about cross-project behavior)
 
 ## Security
 

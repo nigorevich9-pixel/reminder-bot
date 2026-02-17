@@ -1,6 +1,15 @@
 # Ops / runbook (reminder-bot)
 
-System-level ops map lives in `/root/docs/ops_and_observability.md`.
+System-level ops map lives in `/root/server-docs/docs/ops.md`.
+
+## Local run
+
+- Bot: `python -m app.bot.main`
+- Worker: `python -m app.worker.runner`
+
+## Migrations
+
+Alembic: `alembic/`.
 
 ## Services (systemd on VDS)
 
