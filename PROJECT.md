@@ -44,8 +44,8 @@
   - читает `tasks/task_details/codegen_jobs` и показывает пользователю статус/результат
 
 Канонические сценарии по связке компонентов описаны в:
-- `/root/core-orchestrator/docs/scenarios.md`
-- `/root/core-orchestrator/docs/events.md` (контракт `events`)
+- `/root/core-orchestrator/SCENARIOS.md`
+- `/root/core-orchestrator/EVENTS.md` (контракт `events`)
 
 ### Shared inbox: таблица `events`
 При `/core` и при командах `/run`/`/hold`/`/ask` бот пишет запись в `events` с:
@@ -54,7 +54,7 @@
 - `payload_hash=sha256(canonical_json(payload))`
 - `payload` (jsonb) + денормализованные колонки (`event_type`, `tg_id`, `chat_id`, `request_kind`)
 
-Формат `payload` см. `/root/core-orchestrator/docs/events.md`. Важно про текущую реализацию:
+Формат `payload` см. `/root/core-orchestrator/EVENTS.md`. Важно про текущую реализацию:
 - `/core` создаёт только `request.kind in {"question","task"}` (вариант `reminder` в core-контракте зарезервирован; напоминания создаются через `/new` и отдельные таблицы).
 - Команды `/run`/`/hold`/`/ask` пишутся как `event_type="user_command"`.
 
