@@ -20,8 +20,7 @@
   - `/core` — создать “вопрос” или “задачу” для оркестратора
   - `/tasks`, `/task <id>` — посмотреть статус/ответ
   - `/run <id>`, `/hold <id>`, `/ask <id> <text>` — команды в core через `events`
-  - авто-доставка ответа пользователю для `SEND_TO_USER`
-  - one-shot “нужно уточнение” для `WAITING_USER`
+  - transition-driven уведомления по статусам core-задач (`WAITING_USER/NEEDS_REVIEW/DONE/FAILED/STOPPED_BY_USER`) с retry/backoff и delivery trace (`task_details(kind=tg_delivery)`)
 
 ## Стек
 - Python, aiogram
@@ -120,13 +119,15 @@
 6) Бот фоном (polling) находит `task_id` по `event_id` и присылает пользователю сообщение с `/task` и `/run`.
 
 ### 3) Доставка результата “вопроса” (core → Telegram)
-- Когда core переводит задачу в `SEND_TO_USER`, воркер `reminder-worker` отправляет пользователю сообщение вида “Вопрос/Ответ” и переводит задачу в `DONE`.
+- Когда core переводит задачу в `DONE`, воркер `reminder-worker` отправляет пользователю сообщение вида “Вопрос/Ответ”.
+  - Delivery **не меняет** `tasks.status`: outcome (`DONE/FAILED/...`) отделён от доставки.
+  - Для надёжности доставка пишет attempts в `task_details(kind=tg_delivery)` и делает retry/backoff при временных ошибках.
   - Важно: бот берёт **writer-ответ**, а не результаты ревьюеров. Он игнорирует `task_details(kind=llm_result)` с `purpose in ('question_review','review_loop')` и берёт последний `llm_result` где `purpose` пустой/NULL или один из `json_retry`, `question_rework`, `question_review_limit`.
 - Когда core переводит задачу в `WAITING_USER`, воркер отправляет one-shot сообщение “Нужно уточнение” и подсказывает `/ask <task_id> ...`.
   - Если в `llm_result` нет `clarify_question` (например, clarify пришёл из machine review), бот берёт вопрос из `task_details(kind=waiting_user_reason).content.question`.
 
 ## Что есть / чего не хватает (относительно roadmap core)
-- **Есть**: approval gate через `/run` (+ опционально auto-run), запись `events`, просмотр `tasks`/`task_details`, авто-доставка `SEND_TO_USER`, one-shot уведомление `WAITING_USER`.
+- **Есть**: approval gate через `/run` (+ опционально auto-run), запись `events`, просмотр `tasks`/`task_details`, delivery-уведомления `WAITING_USER/NEEDS_REVIEW/DONE/FAILED/STOPPED_BY_USER` с delivery trace + retry/backoff.
 - **Не хватает (актуально сейчас)**:
   - Явной команды “approve” (по сути её роль сейчас выполняет `/run`).
   - `/core` не поддерживает `request.kind=reminder` (и не должен: reminders и tasks/questions — разные сущности; reminders живут отдельно и не создают `tasks`).

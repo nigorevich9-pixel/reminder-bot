@@ -6,13 +6,16 @@
 - Репозиторий на GitHub: `nigorevich9-pixel/reminder-bot`
 - `users/reminders/jira_*` в `reminder_db` используются как базовые таблицы; core-оркестратор расширяет БД новыми таблицами (не ломая бота)
 - `reminder-bot` также пишет входящие команды/запросы в shared inbox таблицу `events` (для `core-orchestrator`).
-- `reminder-worker` также доставляет уведомления по core-задачам:
-  - `SEND_TO_USER` → отправка пользователю (вопрос+ответ) → `DONE`
-  - `WAITING_USER` → отправка уточняющего вопроса пользователю (one-shot)
-  - `codegen_result` → one-shot уведомление (PR URL + статус тестов) — подключено в основном loop `reminder-worker` (см. `app/worker/core_task_notify_worker.py` и `app/worker/runner.py`).
+- `reminder-worker` также доставляет уведомления по core-задачам (delivery trace в `task_details(kind=tg_delivery)` с retry/backoff):
+  - `DONE` → финальный итог пользователю (вопрос+ответ / отчёт) (delivery не меняет `tasks.status`)
+  - `FAILED` → ошибка пользователю (delivery не меняет `tasks.status`)
+  - `WAITING_USER` → уточняющий вопрос пользователю
+  - `NEEDS_REVIEW` → “нужен человек” (для question и task)
+  - `STOPPED_BY_USER` → уведомление об остановке
+  - `codegen_result` → уведомление (PR URL + статус тестов)
 
 Примечания по совместимости с machine review в core:
-- При `SEND_TO_USER` бот отправляет пользователю **writer-ответ** и игнорирует `llm_result` от ревьюеров (`purpose=question_review`, `purpose=review_loop`).
+- Для финального сообщения бот отправляет пользователю **writer-ответ** и игнорирует `llm_result` от ревьюеров (`purpose=question_review`, `purpose=review_loop`).
 - При `WAITING_USER` бот берёт вопрос из `llm_result.clarify_question`, а если его нет — из `waiting_user_reason.question` (это важно для review clarify).
 
 ## Подключения
@@ -31,7 +34,7 @@
 - Требование безопасности: `DATABASE_URL` должен указывать на test-БД (например `reminder_db_test`) и host `localhost`/`127.0.0.1` (guard включён в скриптах).
 - Functional smoke покрывают:
   - запись событий в `events` (включая denormalized поля)
-  - доставку задач `SEND_TO_USER`/`WAITING_USER` через stub-бот и корректные transitions
+  - доставку `DONE/FAILED/WAITING_USER/NEEDS_REVIEW` через stub-бот и корректные delivery attempts
 
 ## Known issues
 - Help-текст `/hold` вводит в заблуждение: в core это терминальная остановка (`STOPPED_BY_USER`) с отменой очереди/кодогена (см. `/root/core-orchestrator/EVENTS.md`).

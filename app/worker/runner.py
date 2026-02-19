@@ -9,9 +9,11 @@ from app.config.settings import settings
 from app.db import AsyncSessionLocal
 from app.repositories.reminder_repository import ReminderRepository
 from app.worker.core_task_notify_worker import (
-    process_core_task_notifications,
     process_core_codegen_notifications,
+    process_core_done_notifications,
+    process_core_failed_notifications,
     process_core_needs_review_notifications,
+    process_core_stopped_notifications,
     process_core_waiting_user_notifications,
 )
 from app.utils.datetime import compute_next_run_at
@@ -67,9 +69,6 @@ async def run_loop() -> None:
                 processed = await process_due_reminders(session, bot)
                 if processed:
                     logger.info("Processed %s reminders", processed)
-                sent = await process_core_task_notifications(session, bot, limit=20)
-                if sent:
-                    logger.info("Sent %s core task notifications", sent)
                 asked = await process_core_waiting_user_notifications(session, bot, limit=20)
                 if asked:
                     logger.info("Sent %s core waiting-user notifications", asked)
@@ -79,6 +78,15 @@ async def run_loop() -> None:
                 codegen_notified = await process_core_codegen_notifications(session, bot, limit=20)
                 if codegen_notified:
                     logger.info("Sent %s core codegen notifications", codegen_notified)
+                done_notified = await process_core_done_notifications(session, bot, limit=20)
+                if done_notified:
+                    logger.info("Sent %s core done notifications", done_notified)
+                failed_notified = await process_core_failed_notifications(session, bot, limit=20)
+                if failed_notified:
+                    logger.info("Sent %s core failed notifications", failed_notified)
+                stopped_notified = await process_core_stopped_notifications(session, bot, limit=20)
+                if stopped_notified:
+                    logger.info("Sent %s core stopped notifications", stopped_notified)
             except Exception as exc:
                 logger.exception("Worker error: %s", exc)
         await asyncio.sleep(settings.worker_poll_seconds)
