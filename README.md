@@ -2,6 +2,8 @@
 
 Telegram bot (UI) + reminders, and UI/notifications for `core-orchestrator` tasks.
 
+Docs last reviewed: 2026-02-19.
+
 ## Quickstart (dev / smoke)
 
 - Run repo checks: `cd /root/reminder-bot && DATABASE_URL=... ./check.sh`

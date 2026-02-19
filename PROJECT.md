@@ -29,6 +29,25 @@
 - Alembic migrations
 - systemd services
 
+## База данных (ownership)
+
+`reminder-bot` использует общий Postgres `reminder_db` и **владеет** (создаёт/мигрирует) своими таблицами.
+
+### Таблицы, за которые отвечает `reminder-bot`
+
+- `users` — Telegram users (`tg_id`, username, first_name, created_at, …)
+- `reminders` — напоминания (one-shot/cron; run_at/cron_expr/timezone/next_run_at/status/…)
+- `jira_subscriptions`, `jira_last_seen` — Jira (deprecated, но таблицы/миграции исторически существуют)
+- `events` — shared inbox для `core-orchestrator` (бот пишет туда события как UI)
+
+`events` implementation references:
+- table creation (clean installs): `/root/reminder-bot/alembic/versions/f5c3cd383f5b_denormalize_events_fields.py`
+- idempotency indexes: `/root/reminder-bot/alembic/versions/20260204_0001_events_idempotency_indexes.py`
+
+### Таблицы, которые `reminder-bot` использует, но не мигрирует
+
+- `tasks`, `task_details`, `task_transitions`, `llm_requests`, `llm_responses`, `codegen_jobs`, `projects/*` — зона ответственности `core-orchestrator` (бот читает/показывает статус и отправляет уведомления).
+
 ## Архитектура
 - `app/bot/*` — Telegram handlers
 - `app/services/*` — бизнес-логика
@@ -77,7 +96,7 @@
 - `/tasks` — список твоих задач (последние 20)
 - `/task <id>` — статус задачи + последний ответ LLM + (если есть) состояние codegen/PR
 - `/run <task_id>` — запустить задачу/вопрос (approval gate)
-- `/hold <task_id>` — “приостановить” (core переведёт задачу в `STOPPED_BY_USER` и отменит очередь/кодоген)
+- `/hold <task_id>` — остановить/отменить (core переведёт задачу в `STOPPED_BY_USER` и отменит очередь/кодоген)
 - `/ask <task_id> <text>` — ответ пользователем на уточняющий вопрос (если задача в `WAITING_USER`, core продолжит диалог и создаст новый `llm_request`)
 - `/needs_review` — список задач `NEEDS_REVIEW` + “возраст” в этом статусе
 
