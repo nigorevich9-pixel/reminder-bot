@@ -34,7 +34,7 @@
   - доставку задач `SEND_TO_USER`/`WAITING_USER` через stub-бот и корректные transitions
 
 ## Known issues
-- Help-текст `/hold` вводит в заблуждение: в core это терминальная остановка.
+- Help-текст `/hold` вводит в заблуждение: в core это терминальная остановка (`STOPPED_BY_USER`) с отменой очереди/кодогена (см. `/root/core-orchestrator/EVENTS.md`).
 - Схема `events` создаётся “если не существует” — на некоторых окружениях это может конфликтовать с ручными изменениями.
 - Нотификатор должен быть устойчивым к отсутствию `chat_id` в raw_input (сейчас best-effort).
 
@@ -42,7 +42,7 @@
 - Персистентные таймзоны пользователей (если понадобится)
 - Доп. очистка/архивирование старых уведомлений
 - Выбор проекта/репозитория в `/core` (передавать `project_id`).
-- Более понятные тексты/UX вокруг `/hold`.
+- UX: разделить pause vs stop для `/hold` (pause+resume и отдельный stop/cancel), см. `/root/server-docs/docs/roadmap.md`.
 - Режим “просмотр задач” (list, filters) для удобства пользователя.
 - Rate-limit/anti-spam на создание задач.
 - Orchestration-задачи (tasks/events/llm_requests/codegen) считаем зоной ответственности `core-orchestrator`; этот проект держим как UI+reminders (+ нотификации).
