@@ -18,7 +18,7 @@ Note: Jira-related items below are historical; in the current system roadmap Jir
   - `/tasks`, `/task <id>` (просмотр задач/ответов)
   - `/run <id>`, `/hold <id>`, `/ask <id> <text>` (команды в core)
   - `/needs_review` (список задач в статусе NEEDS_REVIEW + возраст)
-  - auto-delivery для `SEND_TO_USER` и one-shot уведомление для `WAITING_USER` (в `reminder-worker`)
+  - delivery-уведомления `WAITING_USER/NEEDS_REVIEW/DONE/FAILED/STOPPED_BY_USER` + `codegen_result` (в `reminder-worker`, с delivery trace + retry/backoff)
 
 ## Jira Intake
 - Jira API integration (polling)
@@ -34,6 +34,6 @@ Note: Jira-related items below are historical; in the current system roadmap Jir
 - Выделен отдельный репозиторий `core-orchestrator` (control plane) с миграциями core-таблиц в `reminder_db`
 
 ## Testing / Smoke checks
-- Добавлены короткие functional smoke тесты (проверяют `events` + доставку `SEND_TO_USER`/`WAITING_USER` без реального Telegram).
+- Добавлены короткие functional smoke тесты (проверяют `events` + доставку `DONE/FAILED/WAITING_USER/NEEDS_REVIEW` без реального Telegram).
 - Добавлен `./check.sh` (проверка этого репозитория одной командой) и `/root/test_all.sh` (проверка всех репо по очереди).
 - Миграции сделаны воспроизводимыми для чистой test-БД: `events` создаётся через `CREATE TABLE IF NOT EXISTS` перед добавлением denormalized колонок.

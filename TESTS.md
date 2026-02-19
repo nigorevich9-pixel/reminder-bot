@@ -24,21 +24,23 @@
 - **Проверки**:
   - Поля в строке `events` совпадают с ожидаемыми значениями.
 
-#### `test_send_to_user_transitions_to_done_and_sends_message`
+#### `test_done_is_notified_and_does_not_change_status`
 
-- **Что тестирует**: `process_core_task_notifications()` берёт задачу со статусом `SEND_TO_USER`, отправляет сообщение в TG и переводит задачу в `DONE`.
+- **Что тестирует**: `process_core_done_notifications()` берёт задачу со статусом `DONE`, отправляет сообщение в TG и пишет delivery attempt в `task_details(kind=tg_delivery)` (delivery не меняет `tasks.status`).
 - **Данные**:
   - `users`: upsert по `tg_id=9001`
-  - `tasks`: создаётся задача `status='SEND_TO_USER'`
+- `tasks`: создаётся задача `status='DONE'`
+  - `task_transitions`: вставляется переход `RUNNING -> DONE` (notification is transition-driven)
   - `task_details`:
     - `kind='raw_input'`, `content` содержит `tg.chat_id=12345`, `tg.tg_id=9001`, `text="What?"`
     - `kind='llm_result'`, `content` содержит `answer="Because."`, `clarify_question=None`
   - `bot`: stub с `send_message()`, который записывает вызовы в `bot.sent`
 - **Проверки**:
   - функция возвращает `sent == 1`
-  - `tasks.status` стал `DONE`
+  - `tasks.status` остался `DONE`
   - `bot.sent` содержит ровно 1 сообщение в `chat_id=12345`
   - текст содержит `"Ответ:"`
+  - есть `task_details(kind=tg_delivery)` со `status='sent'`
 
 #### `test_waiting_user_is_notified_once`
 

@@ -23,7 +23,7 @@
 - Commands + FSM flows (reminders + core UI): `app/bot/handlers.py`
 - `events` writer + task reading helpers: `app/repositories/core_tasks_repository.py`
 - Reminder delivery worker loop: `app/worker/runner.py`
-- Core task notification helpers (`SEND_TO_USER`, `WAITING_USER`, codegen notify helper): `app/worker/core_task_notify_worker.py`
+- Core task notification helpers (`WAITING_USER/NEEDS_REVIEW/DONE/FAILED/STOPPED_BY_USER` + codegen notify helper): `app/worker/core_task_notify_worker.py`
 
 ## Key behavior to keep in mind
 

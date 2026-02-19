@@ -30,7 +30,8 @@ Alembic: `alembic/`.
   - это не проблема `reminder-bot` (он только пишет `events`), проверить `core-event-worker.service`
 - Пользователь не получает финальный ответ:
   - проверить `reminder-worker.service`
-  - проверить, что в БД есть `tasks.status='SEND_TO_USER'` и `task_details(kind=llm_result)`
+  - проверить, что в БД есть `tasks.status IN ('DONE','FAILED','STOPPED_BY_USER')` и нужные артефакты (`task_details(kind=llm_result)` / `codegen_result`)
+  - проверить `task_details(kind=tg_delivery)` по `message_kind='final'` (последний attempt: `status/retryable/next_attempt_at/error`)
 - Не приходит “нужно уточнение”:
   - проверить `tasks.status='WAITING_USER'`
   - проверить `task_details(kind=waiting_user_reason)` (если clarify пришёл от machine review)
