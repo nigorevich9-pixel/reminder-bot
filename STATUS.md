@@ -49,4 +49,7 @@
 
 ## Примечание про `events`
 - `events` — shared inbox. В ней включены idempotency индексы (`source+external_id`, `payload_hash`).
+- Реализация в миграциях `reminder-bot`:
+  - table creation (clean installs): `/root/reminder-bot/alembic/versions/f5c3cd383f5b_denormalize_events_fields.py`
+  - idempotency indexes: `/root/reminder-bot/alembic/versions/20260204_0001_events_idempotency_indexes.py`
 - `core-orchestrator` читает `events`, создаёт `tasks` и дальше ведёт pipeline через `llm_requests/llm_responses`.
