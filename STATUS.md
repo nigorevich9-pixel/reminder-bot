@@ -48,6 +48,7 @@
 - Unified request в `/core`: убрать split “Вопрос/Задача” в UI; отправлять один “request”, классификацию/маршрут определяет `core-orchestrator` planner/policy.
 - Priority / criticality: UX для выставления/отображения важности запроса (или хотя бы отображение policy core в `/task`).
 - UX: разделить pause vs stop для `/hold` (pause+resume и отдельный stop/cancel), см. `/root/server-docs/docs/roadmap.md`.
+- UX: когда задача в `WAITING_USER` и бот просит ответить командой вида `/ask <task_id> <text>`, следующее сообщение пользователя автоматически трактовать как ответ для `/ask <task_id>` (без ввода `/ask <task_id>`).
 - Режим “просмотр задач” (list, filters) для удобства пользователя.
 - Rate-limit/anti-spam на создание задач.
 - Orchestration-задачи (tasks/events/llm_requests/codegen) считаем зоной ответственности `core-orchestrator`; этот проект держим как UI+reminders (+ нотификации).

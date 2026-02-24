@@ -139,14 +139,38 @@ class CoreTasksRepository:
     async def get_latest_llm_answer(self, *, task_id: int) -> str | None:
         res = await self._session.execute(
             sa.text(
-                "SELECT content->>'answer' AS answer "
+                "SELECT content "
                 "FROM task_details "
                 "WHERE task_id = :task_id AND kind = 'llm_result' "
-                "ORDER BY id DESC LIMIT 1"
+                "AND (content->>'purpose' IS NULL OR content->>'purpose' IN ('', 'tool_loop', 'json_retry', 'question_rework', 'question_review_limit')) "
+                "ORDER BY id DESC LIMIT 5"
             ),
             {"task_id": task_id},
         )
-        return res.scalar_one_or_none()
+        rows = res.mappings().all()
+        for row in rows:
+            content = row.get("content")
+            if not isinstance(content, dict):
+                continue
+            answer = content.get("answer")
+            if not isinstance(answer, str) or not answer.strip():
+                continue
+            envelope_type = content.get("envelope_type")
+            if isinstance(envelope_type, str) and envelope_type.strip() == "tool_request":
+                continue
+            if isinstance(envelope_type, str) and envelope_type.strip() == "final":
+                return answer.strip()
+            raw = answer.strip()
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                return raw
+            if isinstance(obj, dict) and obj.get("type") == "tool_request":
+                continue
+            if isinstance(obj, dict) and obj.get("type") == "final" and isinstance(obj.get("answer"), str) and obj.get("answer").strip():
+                return obj.get("answer").strip()
+            return raw
+        return None
 
     async def get_raw_input(self, *, task_id: int) -> dict | None:
         res = await self._session.execute(
@@ -167,7 +191,7 @@ class CoreTasksRepository:
                 "SELECT content "
                 "FROM task_details "
                 "WHERE task_id = :task_id AND kind = 'llm_result' "
-                "AND (content->>'purpose' IS NULL OR content->>'purpose' IN ('', 'json_retry', 'question_rework', 'question_review_limit')) "
+                "AND (content->>'purpose' IS NULL OR content->>'purpose' IN ('', 'tool_loop', 'json_retry', 'question_rework', 'question_review_limit')) "
                 "ORDER BY id DESC LIMIT 1"
             ),
             {"task_id": task_id},

@@ -659,7 +659,7 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
     msg = None
     if kind == "question":
         question = _extract_question_text(raw_input or {})
-        answer = _extract_answer_text(llm_result or {})
+        answer = await repo.get_latest_llm_answer(task_id=task_id)
         if question and answer:
             msg = _format_message(task_id=task_id, question=question, answer=answer)
     else:
