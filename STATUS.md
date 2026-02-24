@@ -45,6 +45,8 @@
 - Персистентные таймзоны пользователей (если понадобится)
 - Доп. очистка/архивирование старых уведомлений
 - Выбор проекта/репозитория в `/core` (передавать `project_id`).
+- Unified request в `/core`: убрать split “Вопрос/Задача” в UI; отправлять один “request”, классификацию/маршрут определяет `core-orchestrator` planner/policy.
+- Priority / criticality: UX для выставления/отображения важности запроса (или хотя бы отображение policy core в `/task`).
 - UX: разделить pause vs stop для `/hold` (pause+resume и отдельный stop/cancel), см. `/root/server-docs/docs/roadmap.md`.
 - Режим “просмотр задач” (list, filters) для удобства пользователя.
 - Rate-limit/anti-spam на создание задач.

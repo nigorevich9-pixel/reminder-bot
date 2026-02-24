@@ -75,6 +75,7 @@
 Формат `payload` см. `/root/core-orchestrator/EVENTS.md`. Важно про текущую реализацию:
 - `/core` создаёт только `request.kind in {"question","task"}` (вариант `reminder` в core-контракте зарезервирован; напоминания создаются через `/new` и отдельные таблицы).
 - Команды `/run`/`/hold`/`/ask` пишутся как `event_type="user_command"`.
+Planned: `/core` будет отправлять unified “request” (сырой запрос пользователя + контекст), а классификацию/маршрут (question/task/command/...) будет делать `core-orchestrator` planner/policy.
 
 ## Основные команды бота
 - `/start` — справка
@@ -117,6 +118,9 @@
 4) Бот пишет `events.user_request`.
 5) `core-event-worker` читает `events`, создаёт `tasks` и переводит в `WAITING_APPROVAL`.
 6) Бот фоном (polling) находит `task_id` по `event_id` и присылает пользователю сообщение с `/task` и `/run`.
+
+Planned:
+- убрать шаг “выбор: Вопрос/Задача”: `/core` создаёт один “запрос”, а core классифицирует intent и выбирает сценарий (question/task/command/...) и политику (priority/criticality, web verification, модель/лимиты).
 
 ### 3) Доставка результата “вопроса” (core → Telegram)
 - Когда core переводит задачу в `DONE`, воркер `reminder-worker` отправляет пользователю сообщение вида “Вопрос/Ответ”.
