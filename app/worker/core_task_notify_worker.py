@@ -43,6 +43,10 @@ def _extract_chat_id(raw_input: dict) -> int | None:
 
 def _extract_question_text(raw_input: dict) -> str | None:
     text = raw_input.get("text")
+    if not (isinstance(text, str) and text.strip()):
+        req = raw_input.get("request")
+        if isinstance(req, dict):
+            text = req.get("text")
     return text.strip() if isinstance(text, str) and text.strip() else None
 
 
@@ -65,6 +69,17 @@ def _extract_waiting_reason_question(waiting_reason: dict | None) -> str | None:
 
 def _format_message(*, task_id: int, question: str, answer: str) -> str:
     return f"task #{task_id}\n\nВопрос:\n{question}\n\nОтвет:\n{answer}"
+
+def _format_answer_only_message(*, task_id: int, answer: str) -> str:
+    return f"task #{task_id}\n\nОтвет:\n{answer}"
+
+def _format_done_fallback_message(*, task_id: int, title: str | None = None) -> str:
+    title = (title or "").strip()
+    lines = [f"task #{task_id}"]
+    if title:
+        lines.append(title)
+    lines.extend(["", "DONE", "", f"Details: /task {task_id}"])
+    return "\n".join(lines).strip()
 
 
 def _format_clarify_message(*, task_id: int, question: str) -> str:
@@ -660,8 +675,13 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
     if kind == "question":
         question = _extract_question_text(raw_input or {})
         answer = await repo.get_latest_llm_answer(task_id=task_id)
-        if question and answer:
-            msg = _format_message(task_id=task_id, question=question, answer=answer)
+        if answer is None:
+            answer = _extract_answer_text(llm_result or {})
+        if answer:
+            if question:
+                msg = _format_message(task_id=task_id, question=question, answer=answer)
+            else:
+                msg = _format_answer_only_message(task_id=task_id, answer=answer)
     else:
         if isinstance(codegen_result, dict):
             pr_url = codegen_result.get("pr_url") if isinstance(codegen_result.get("pr_url"), str) else None
@@ -688,6 +708,8 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
                     lines.append(title)
                 lines.extend(["", "DONE", "", "answer:", answer, "", f"Details: /task {task_id}"])
                 msg = "\n".join(lines).strip()
+    if not msg:
+        msg = _format_done_fallback_message(task_id=task_id, title=str(task.get("title") or ""))
 
     await _send_with_tg_delivery_trace(
         session,
