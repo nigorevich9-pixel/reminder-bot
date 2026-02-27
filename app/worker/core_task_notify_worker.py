@@ -31,6 +31,16 @@ UTC = timezone.utc
 TG_MESSAGE_VERSION = 1
 TG_DELIVERY_MAX_ATTEMPTS = max(int(getattr(settings, "tg_delivery_max_attempts", 10)), 1)
 TG_DELIVERY_MAX_RETRY_WINDOW_SECONDS = max(int(getattr(settings, "tg_delivery_max_retry_window_seconds", 86400)), 0)
+TG_TEXT_MAX_CHARS = 3800
+
+
+def _truncate_tg_text(*, task_id: int, text: str) -> str:
+    t = str(text or "")
+    if len(t) <= TG_TEXT_MAX_CHARS:
+        return t
+    suffix = f"\n\n…(truncated; Details: /task {int(task_id)})"
+    cut = max(TG_TEXT_MAX_CHARS - len(suffix), 0)
+    return (t[:cut].rstrip() + suffix).strip()
 
 
 def _extract_chat_id(raw_input: dict) -> int | None:
@@ -336,7 +346,8 @@ async def _send_with_tg_delivery_trace(
         error = "missing chat_id/text"
     else:
         try:
-            msg = await bot.send_message(chat_id=int(chat_id), text=str(text))
+            safe_text = _truncate_tg_text(task_id=task_id, text=str(text))
+            msg = await bot.send_message(chat_id=int(chat_id), text=safe_text)
             telegram_message_id = getattr(msg, "message_id", None)
         except Exception as exc:
             status = "failed"
