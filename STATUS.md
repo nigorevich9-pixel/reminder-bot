@@ -44,7 +44,7 @@
 ## Осталось сделать (общие)
 - Персистентные таймзоны пользователей (если понадобится)
 - Доп. очистка/архивирование старых уведомлений
-- Выбор проекта/репозитория в `/core` (передавать `project_id`).
+- Выбор репозитория в `/core`: показывать доступные репо (ACL через `project_members`), и использовать `repo_id` в `tool_request` для `repo.*` инструментов (а `project_id` остаётся опциональной подсказкой/маппингом для codegen).
 - Unified request в `/core`: убрать split “Вопрос/Задача” в UI; отправлять один “request”, классификацию/маршрут определяет `core-orchestrator` planner/policy.
 - Priority / criticality: UX для выставления/отображения важности запроса (или хотя бы отображение policy core в `/task`).
 - UX: разделить pause vs stop для `/hold` (pause+resume и отдельный stop/cancel), см. `/root/server-docs/docs/roadmap.md`.
