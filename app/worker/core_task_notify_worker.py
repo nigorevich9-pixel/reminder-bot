@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,11 @@ else:
     Bot = object  # type: ignore[misc,assignment]
 
 try:
+    from aiogram.types import BufferedInputFile  # type: ignore[import-not-found]
+except Exception:
+    BufferedInputFile = None
+
+try:
     from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError  # type: ignore[import-not-found]
 
     _PERMANENT_TG_EXC = (TelegramForbiddenError, TelegramBadRequest)
@@ -31,6 +37,31 @@ UTC = timezone.utc
 TG_MESSAGE_VERSION = 1
 TG_DELIVERY_MAX_ATTEMPTS = max(int(getattr(settings, "tg_delivery_max_attempts", 10)), 1)
 TG_DELIVERY_MAX_RETRY_WINDOW_SECONDS = max(int(getattr(settings, "tg_delivery_max_retry_window_seconds", 86400)), 0)
+TG_TEXT_MAX_CHARS = 3800
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = str(os.environ.get(name, "") or "").strip()
+    if not raw:
+        return int(default)
+    try:
+        return int(raw)
+    except Exception:
+        return int(default)
+
+
+def _tg_text_max_chars() -> int:
+    return max(_env_int("TG_TEXT_MAX_CHARS", TG_TEXT_MAX_CHARS), 200)
+
+
+def _truncate_tg_text(*, task_id: int, text: str) -> str:
+    t = str(text or "")
+    max_chars = _tg_text_max_chars()
+    if len(t) <= max_chars:
+        return t
+    suffix = f"\n\n…(truncated; Details: /task {int(task_id)})"
+    cut = max(max_chars - len(suffix), 0)
+    return (t[:cut].rstrip() + suffix).strip()
 
 
 def _extract_chat_id(raw_input: dict) -> int | None:
@@ -165,6 +196,60 @@ def _extract_json_answer(raw_answer: str | None) -> str | None:
         return obj.get("answer").strip()
     return raw
 
+
+def _maybe_pretty_json_for_tg(text: str | None) -> str | None:
+    if not isinstance(text, str):
+        return text
+    raw = _strip_markdown_fences(text)
+    if not raw or not (raw.startswith("{") or raw.startswith("[")):
+        return text
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return text
+    if not isinstance(obj, (dict, list)):
+        return text
+
+    max_depth = max(_env_int("TG_PRETTY_JSON_MAX_DEPTH", 4), 1)
+    max_items = max(_env_int("TG_PRETTY_JSON_MAX_ITEMS", 30), 1)
+    max_str = max(_env_int("TG_PRETTY_JSON_MAX_STRING", 400), 50)
+
+    def _clip_str(s: str) -> str:
+        s2 = s if isinstance(s, str) else str(s)
+        if len(s2) <= max_str:
+            return s2
+        return s2[: max_str - 3] + "..."
+
+    def _prune(x: object, depth: int) -> object:
+        if depth <= 0:
+            return "…"
+        if isinstance(x, str):
+            return _clip_str(x)
+        if isinstance(x, dict):
+            out: dict[str, object] = {}
+            items = list(x.items())
+            for k, v in items[:max_items]:
+                out[_clip_str(str(k))] = _prune(v, depth - 1)
+            if len(items) > max_items:
+                out["…"] = f"+{len(items) - max_items} keys"
+            return out
+        if isinstance(x, list):
+            out_list: list[object] = []
+            for v in x[:max_items]:
+                out_list.append(_prune(v, depth - 1))
+            if len(x) > max_items:
+                out_list.append(f"… +{len(x) - max_items} items")
+            return out_list
+        if isinstance(x, (int, float, bool)) or x is None:
+            return x
+        return _clip_str(str(x))
+
+    pruned = _prune(obj, max_depth)
+    try:
+        return json.dumps(pruned, ensure_ascii=False, indent=2)
+    except Exception:
+        return text
+
 def _format_needs_review_message(
     *,
     task_id: int,
@@ -175,7 +260,7 @@ def _format_needs_review_message(
 ) -> str:
     lines = [f"task #{task_id}", "", "NEEDS_REVIEW"]
     if answer:
-        lines.extend(["", "answer:", answer])
+        lines.extend(["", "answer:", _maybe_pretty_json_for_tg(answer) or answer])
     if llm_error:
         lines.extend(["", "llm_error:", llm_error])
     if pr_url and pr_error:
@@ -301,6 +386,7 @@ async def _send_with_tg_delivery_trace(
     task_id: int,
     chat_id: int | None,
     text: str | None,
+    document: tuple[str, bytes] | None = None,
     message_kind: str,
     to_status: str | None = None,
     transition_id: int | None = None,
@@ -329,15 +415,36 @@ async def _send_with_tg_delivery_trace(
     error = None
     next_attempt_at = None
     telegram_message_id = None
+    sent_as = None
+    document_filename = None
 
-    if chat_id is None or not text:
+    if chat_id is None or (not text and not document):
         status = "failed"
         retryable = False
         error = "missing chat_id/text"
     else:
         try:
-            msg = await bot.send_message(chat_id=int(chat_id), text=str(text))
-            telegram_message_id = getattr(msg, "message_id", None)
+            if document is not None and hasattr(bot, "send_document"):
+                filename, b = document
+                document_filename = str(filename or "result.json")
+                if BufferedInputFile is not None:
+                    input_file = BufferedInputFile(b, filename=document_filename)  # type: ignore[call-arg]
+                else:
+                    class _BytesFile:
+                        def __init__(self, data: bytes, filename: str) -> None:
+                            self.data = data
+                            self.filename = filename
+
+                    input_file = _BytesFile(b, document_filename)
+                caption = _truncate_tg_text(task_id=task_id, text=str(text or ""))
+                msg = await bot.send_document(chat_id=int(chat_id), document=input_file, caption=caption)  # type: ignore[attr-defined]
+                telegram_message_id = getattr(msg, "message_id", None)
+                sent_as = "document"
+            else:
+                safe_text = _truncate_tg_text(task_id=task_id, text=str(text or ""))
+                msg = await bot.send_message(chat_id=int(chat_id), text=safe_text)
+                telegram_message_id = getattr(msg, "message_id", None)
+                sent_as = "message"
         except Exception as exc:
             status = "failed"
             retryable, error = _classify_send_exception(exc)
@@ -366,6 +473,8 @@ async def _send_with_tg_delivery_trace(
             "error": error,
             "chat_id": int(chat_id) if chat_id is not None else None,
             "telegram_message_id": int(telegram_message_id) if isinstance(telegram_message_id, int) else None,
+            "sent_as": sent_as,
+            "document_filename": document_filename,
             "first_attempt_at": first_attempt_at.isoformat(),
             "last_attempt_at": now.isoformat(),
             "next_attempt_at": next_attempt_at,
@@ -672,16 +781,28 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
     kind = (raw_input or {}).get("kind") if isinstance(raw_input, dict) else None
 
     msg = None
+    document = None
     if kind == "question":
         question = _extract_question_text(raw_input or {})
         answer = await repo.get_latest_llm_answer(task_id=task_id)
         if answer is None:
             answer = _extract_answer_text(llm_result or {})
+        pretty = _maybe_pretty_json_for_tg(answer) if isinstance(answer, str) else None
+        if isinstance(pretty, str) and pretty.strip():
+            answer = pretty
         if answer:
             if question:
                 msg = _format_message(task_id=task_id, question=question, answer=answer)
             else:
                 msg = _format_answer_only_message(task_id=task_id, answer=answer)
+            if isinstance(answer, str) and isinstance(pretty, str) and len(msg or "") > _tg_text_max_chars():
+                filename = f"task_{task_id}_answer.json"
+                document = (filename, answer.encode("utf-8", errors="replace"))
+                placeholder = f"(JSON приложен файлом: {filename})"
+                if question:
+                    msg = _format_message(task_id=task_id, question=question, answer=placeholder)
+                else:
+                    msg = _format_answer_only_message(task_id=task_id, answer=placeholder)
     else:
         if isinstance(codegen_result, dict):
             pr_url = codegen_result.get("pr_url") if isinstance(codegen_result.get("pr_url"), str) else None
@@ -701,6 +822,9 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
             )
         else:
             answer = _extract_answer_text(llm_result or {})
+            pretty = _maybe_pretty_json_for_tg(answer) if isinstance(answer, str) else None
+            if isinstance(pretty, str) and pretty.strip():
+                answer = pretty
             if answer:
                 title = str(task.get("title") or "").strip()
                 lines = [f"task #{task_id}"]
@@ -708,6 +832,14 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
                     lines.append(title)
                 lines.extend(["", "DONE", "", "answer:", answer, "", f"Details: /task {task_id}"])
                 msg = "\n".join(lines).strip()
+                if isinstance(answer, str) and isinstance(pretty, str) and len(msg or "") > _tg_text_max_chars():
+                    filename = f"task_{task_id}_answer.json"
+                    document = (filename, answer.encode("utf-8", errors="replace"))
+                    lines2 = [f"task #{task_id}"]
+                    if title:
+                        lines2.append(title)
+                    lines2.extend(["", "DONE", "", "answer:", f"(JSON приложен файлом: {filename})", "", f"Details: /task {task_id}"])
+                    msg = "\n".join(lines2).strip()
     if not msg:
         msg = _format_done_fallback_message(task_id=task_id, title=str(task.get("title") or ""))
 
@@ -717,6 +849,7 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
         task_id=task_id,
         chat_id=chat_id,
         text=msg,
+        document=document,
         message_kind="final",
         to_status=str(task.get("status") or ""),
         transition_id=transition_id,

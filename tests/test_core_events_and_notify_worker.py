@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 import uuid
 from contextlib import asynccontextmanager
@@ -22,6 +23,7 @@ from app.worker.core_task_notify_worker import (
 class _StubBot:
     def __init__(self) -> None:
         self.sent: list[tuple[int, str]] = []
+        self.sent_docs: list[tuple[int, str, bytes, str]] = []
 
     class _StubMessage:
         def __init__(self, message_id: int) -> None:
@@ -30,6 +32,13 @@ class _StubBot:
     async def send_message(self, chat_id: int, text: str) -> object:
         self.sent.append((int(chat_id), str(text)))
         return self._StubMessage(message_id=1000 + len(self.sent))
+
+    async def send_document(self, chat_id: int, document: object, caption: str | None = None) -> object:
+        # Best-effort extraction: aiogram BufferedInputFile has .filename and .data
+        filename = getattr(document, "filename", "result.json")
+        data = getattr(document, "data", b"")
+        self.sent_docs.append((int(chat_id), str(filename), bytes(data), str(caption or "")))
+        return self._StubMessage(message_id=2000 + len(self.sent_docs))
 
 
 class _FlakyBot(_StubBot):
@@ -230,6 +239,95 @@ class TestCoreEventsAndNotifyWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(matched), 1)
         _chat_id, text = matched[0]
         self.assertIn("Ответ:", text)
+
+    async def test_done_task_json_answer_is_pretty_and_can_be_sent_as_file(self) -> None:
+        bot = _StubBot()
+
+        # Force truncation so the worker chooses the "send as file" path.
+        prev = os.environ.get("TG_TEXT_MAX_CHARS")
+        os.environ["TG_TEXT_MAX_CHARS"] = "200"
+        try:
+            async with _session() as session:
+                res = await session.execute(
+                    sa.text(
+                        "INSERT INTO users (tg_id, username, first_name) "
+                        "VALUES (:tg_id, NULL, NULL) "
+                        "ON CONFLICT (tg_id) DO UPDATE SET tg_id = EXCLUDED.tg_id "
+                        "RETURNING id"
+                    ),
+                    {"tg_id": 9012},
+                )
+                user_id = int(res.scalar_one())
+
+                res = await session.execute(
+                    sa.text(
+                        "INSERT INTO tasks (created_by_user_id, project_id, source, external_key, title, status) "
+                        "VALUES (:uid, NULL, 'telegram', NULL, 't_json', 'DONE') "
+                        "RETURNING id"
+                    ),
+                    {"uid": user_id},
+                )
+                task_id = int(res.scalar_one())
+
+                await session.execute(
+                    sa.text("UPDATE tasks SET updated_at = now() - interval '365 days' WHERE id = :id"),
+                    {"id": task_id},
+                )
+                await session.execute(
+                    sa.text(
+                        "INSERT INTO task_transitions (task_id, from_status, to_status, actor_user_id, reason) "
+                        "VALUES (:tid, 'RUNNING', 'DONE', NULL, 'test')"
+                    ),
+                    {"tid": task_id},
+                )
+                await session.execute(
+                    sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'raw_input', CAST(:c AS jsonb))"),
+                    {
+                        "tid": task_id,
+                        "c": json.dumps(
+                            {"kind": "task", "text": "x", "tg": {"chat_id": 12346, "tg_id": 9012}, "event_id": 1},
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    },
+                )
+
+                payload = {
+                    "projects_count": 5,
+                    "repos": [
+                        {"id": i, "repo_full_name": f"r{i}", "provider": "local", "local_path": "/root/x", "is_active": True, "default_branch": "main"}
+                        for i in range(50)
+                    ],
+                }
+                await session.execute(
+                    sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'llm_result', CAST(:c AS jsonb))"),
+                    {
+                        "tid": task_id,
+                        "c": json.dumps(
+                            {"llm_request_id": 1, "answer": json.dumps(payload, ensure_ascii=False, separators=(",", ":")), "clarify_question": None, "json_invalid": False},
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    },
+                )
+                await session.commit()
+
+            async with _session() as session:
+                sent = await process_core_done_notifications(session, bot, limit=1)
+                await session.commit()
+                self.assertEqual(sent, 1)
+
+            self.assertGreaterEqual(len(bot.sent_docs), 1)
+            _cid, filename, data, caption = bot.sent_docs[0]
+            self.assertTrue(filename.endswith(".json"))
+            self.assertIn("\n  ", data.decode("utf-8", errors="replace"))
+            self.assertIn("task #", caption)
+            self.assertIn("JSON приложен файлом", caption)
+        finally:
+            if prev is None:
+                os.environ.pop("TG_TEXT_MAX_CHARS", None)
+            else:
+                os.environ["TG_TEXT_MAX_CHARS"] = prev
 
     async def test_done_question_is_notified_even_when_question_text_missing(self) -> None:
         bot = _StubBot()

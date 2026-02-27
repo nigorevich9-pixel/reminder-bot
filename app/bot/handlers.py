@@ -7,7 +7,7 @@ UTC = timezone.utc
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.types import BufferedInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.states import (
@@ -28,6 +28,8 @@ from app.utils.datetime import build_user_datetime, format_user_datetime, parse_
 
 
 router = Router()
+
+TELEGRAM_MESSAGE_MAX_LEN = 4096
 
 TYPE_OPTIONS = {
     "Разово": "one_time",
@@ -80,6 +82,14 @@ def _format_month_day(value: date) -> str:
         "декабря",
     ]
     return f"{value.day:02d} {months[value.month - 1]}"
+
+
+async def _answer_text_or_file(message: Message, *, text: str, filename: str) -> None:
+    if len(text) <= TELEGRAM_MESSAGE_MAX_LEN:
+        await message.answer(text)
+        return
+    await message.answer("Ответ слишком длинный для Telegram-сообщения — отправляю файлом.")
+    await message.answer_document(BufferedInputFile(text.encode("utf-8"), filename=filename))
 
 
 def _format_reminders(reminders) -> str:
@@ -541,7 +551,7 @@ async def task_status_handler(message: Message, session: AsyncSession):
             msg += f"\n\nCodegen:\n{status}"
             if status == "FAILED" and error:
                 msg += f"\n{error}"
-    await message.answer(msg)
+    await _answer_text_or_file(message, text=msg, filename=f"task_{task_id}.txt")
 
 
 @router.message(Command("new"))

@@ -78,6 +78,8 @@ if [[ "${RUN_MIGRATIONS}" == "1" ]]; then
   echo "[core-orchestrator] alembic upgrade head"
   (
     cd "${repo_root}/../core-orchestrator"
+    # Core migrations seed project memberships; for clean test DBs allow soft mode.
+    export CORE_SEED_MEMBERSHIPS_STRICT="${CORE_SEED_MEMBERSHIPS_STRICT:-0}"
     python3 -m alembic upgrade head
   )
 fi
