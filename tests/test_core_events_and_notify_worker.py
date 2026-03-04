@@ -322,7 +322,80 @@ class TestCoreEventsAndNotifyWorker(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(filename.endswith(".json"))
             self.assertIn("\n  ", data.decode("utf-8", errors="replace"))
             self.assertIn("task #", caption)
-            self.assertIn("JSON приложен файлом", caption)
+            self.assertIn("Приложено файлом", caption)
+        finally:
+            if prev is None:
+                os.environ.pop("TG_TEXT_MAX_CHARS", None)
+            else:
+                os.environ["TG_TEXT_MAX_CHARS"] = prev
+
+    async def test_done_task_long_plain_text_is_sent_as_txt_file(self) -> None:
+        bot = _StubBot()
+
+        prev = os.environ.get("TG_TEXT_MAX_CHARS")
+        os.environ["TG_TEXT_MAX_CHARS"] = "200"
+        try:
+            async with _session() as session:
+                res = await session.execute(
+                    sa.text(
+                        "INSERT INTO users (tg_id, username, first_name) "
+                        "VALUES (:tg_id, NULL, NULL) "
+                        "ON CONFLICT (tg_id) DO UPDATE SET tg_id = EXCLUDED.tg_id "
+                        "RETURNING id"
+                    ),
+                    {"tg_id": 9013},
+                )
+                user_id = int(res.scalar_one())
+
+                res = await session.execute(
+                    sa.text(
+                        "INSERT INTO tasks (created_by_user_id, project_id, source, external_key, title, status) "
+                        "VALUES (:uid, NULL, 'telegram', NULL, 't_txt', 'DONE') "
+                        "RETURNING id"
+                    ),
+                    {"uid": user_id},
+                )
+                task_id = int(res.scalar_one())
+
+                await session.execute(
+                    sa.text("INSERT INTO task_transitions (task_id, from_status, to_status, actor_user_id, reason) VALUES (:tid, 'RUNNING', 'DONE', NULL, 'test')"),
+                    {"tid": task_id},
+                )
+                await session.execute(
+                    sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'raw_input', CAST(:c AS jsonb))"),
+                    {
+                        "tid": task_id,
+                        "c": json.dumps(
+                            {"kind": "task", "text": "x", "tg": {"chat_id": 12348, "tg_id": 9013}, "event_id": 1},
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    },
+                )
+                await session.execute(
+                    sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'llm_result', CAST(:c AS jsonb))"),
+                    {
+                        "tid": task_id,
+                        "c": json.dumps(
+                            {"llm_request_id": 1, "answer": ("A" * 5000), "clarify_question": None, "json_invalid": False},
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    },
+                )
+                await session.commit()
+
+            async with _session() as session:
+                sent = await process_core_done_notifications(session, bot, limit=1)
+                await session.commit()
+                self.assertEqual(sent, 1)
+
+            self.assertGreaterEqual(len(bot.sent_docs), 1)
+            _cid, filename, data, caption = bot.sent_docs[0]
+            self.assertTrue(filename.endswith(".txt"))
+            self.assertIn("task #", caption)
+            self.assertIn("Приложено файлом", caption)
+            self.assertGreaterEqual(len(data), 1000)
         finally:
             if prev is None:
                 os.environ.pop("TG_TEXT_MAX_CHARS", None)
@@ -720,6 +793,297 @@ class TestCoreEventsAndNotifyWorker(unittest.IsolatedAsyncioTestCase):
         chat_id, text = bot.sent[0]
         self.assertEqual(chat_id, 65432)
         self.assertIn("Clarify?", text)
+
+    async def test_waiting_user_sends_answer_only_when_no_clarify(self) -> None:
+        bot = _StubBot()
+
+        async with _session() as session:
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO users (tg_id, username, first_name) "
+                    "VALUES (:tg_id, NULL, NULL) "
+                    "ON CONFLICT (tg_id) DO UPDATE SET tg_id = EXCLUDED.tg_id "
+                    "RETURNING id"
+                ),
+                {"tg_id": 9020},
+            )
+            user_id = int(res.scalar_one())
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO tasks (created_by_user_id, project_id, source, external_key, title, status) "
+                    "VALUES (:uid, NULL, 'telegram', NULL, 'wait_answer', 'WAITING_USER') "
+                    "RETURNING id"
+                ),
+                {"uid": user_id},
+            )
+            task_id = int(res.scalar_one())
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'raw_input', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {"kind": "task", "text": "x", "tg": {"chat_id": 55555, "tg_id": 9020}, "event_id": 1},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'llm_result', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {"llm_request_id": 20, "answer": "Here is the chunk.", "clarify_question": None, "json_invalid": False},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.commit()
+
+        async with _session() as session:
+            n1 = await process_core_waiting_user_notifications(session, bot, limit=5)
+            await session.commit()
+            self.assertEqual(n1, 1)
+
+        self.assertEqual(len(bot.sent), 1)
+        chat_id, text = bot.sent[0]
+        self.assertEqual(chat_id, 55555)
+        self.assertIn("Ответ:", text)
+        self.assertIn("Here is the chunk.", text)
+
+    async def test_waiting_user_read_file_paging_sends_document_with_instructions(self) -> None:
+        bot = _StubBot()
+
+        async with _session() as session:
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO users (tg_id, username, first_name) "
+                    "VALUES (:tg_id, NULL, NULL) "
+                    "ON CONFLICT (tg_id) DO UPDATE SET tg_id = EXCLUDED.tg_id "
+                    "RETURNING id"
+                ),
+                {"tg_id": 9021},
+            )
+            user_id = int(res.scalar_one())
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO tasks (created_by_user_id, project_id, source, external_key, title, status) "
+                    "VALUES (:uid, NULL, 'telegram', NULL, 'wait_file', 'WAITING_USER') "
+                    "RETURNING id"
+                ),
+                {"uid": user_id},
+            )
+            task_id = int(res.scalar_one())
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'raw_input', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {"kind": "task", "text": "x", "tg": {"chat_id": 55556, "tg_id": 9021}, "event_id": 1},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'llm_result', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {"llm_request_id": 21, "answer": "file-chunk", "clarify_question": None, "json_invalid": False},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'waiting_user_reason', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {"type": "read_file_paging", "path": "EVENTS.md", "part_no": 1, "llm_request_id": 21},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.commit()
+
+        async with _session() as session:
+            n1 = await process_core_waiting_user_notifications(session, bot, limit=5)
+            await session.commit()
+            self.assertEqual(n1, 1)
+
+        self.assertGreaterEqual(len(bot.sent_docs), 1)
+        chat_id, filename, data, caption = bot.sent_docs[0]
+        self.assertEqual(chat_id, 55556)
+        self.assertTrue(filename.endswith(".txt"))
+        self.assertIn("Следующая часть", caption)
+        self.assertIn(f"/ask {task_id} next", caption)
+        self.assertIn(f"/ask {task_id} all", caption)
+        self.assertEqual(data.decode("utf-8", errors="replace"), "file-chunk")
+
+    async def test_waiting_user_read_file_paging_uses_purpose_next(self) -> None:
+        bot = _StubBot()
+
+        async with _session() as session:
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO users (tg_id, username, first_name) "
+                    "VALUES (:tg_id, NULL, NULL) "
+                    "ON CONFLICT (tg_id) DO UPDATE SET tg_id = EXCLUDED.tg_id "
+                    "RETURNING id"
+                ),
+                {"tg_id": 9022},
+            )
+            user_id = int(res.scalar_one())
+
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO tasks (created_by_user_id, project_id, source, external_key, title, status) "
+                    "VALUES (:uid, NULL, 'telegram', NULL, 'wait_file_next', 'WAITING_USER') "
+                    "RETURNING id"
+                ),
+                {"uid": user_id},
+            )
+            task_id = int(res.scalar_one())
+
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'raw_input', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {"kind": "task", "text": "x", "tg": {"chat_id": 55557, "tg_id": 9022}, "event_id": 1},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'llm_result', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {
+                            "llm_request_id": 22,
+                            "purpose": "read_file_paging_next",
+                            "answer": "chunk-2",
+                            "clarify_question": None,
+                            "json_invalid": False,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'waiting_user_reason', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {"type": "read_file_paging", "path": "EVENTS.md", "part_no": 2, "llm_request_id": 22},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.commit()
+
+        async with _session() as session:
+            n1 = await process_core_waiting_user_notifications(session, bot, limit=5)
+            await session.commit()
+            self.assertEqual(n1, 1)
+
+        self.assertGreaterEqual(len(bot.sent_docs), 1)
+        chat_id, filename, data, caption = bot.sent_docs[0]
+        self.assertEqual(chat_id, 55557)
+        self.assertTrue(filename.endswith(".txt"))
+        self.assertIn(f"/ask {task_id} next", caption)
+        self.assertIn(f"/ask {task_id} all", caption)
+        self.assertEqual(data.decode("utf-8", errors="replace"), "chunk-2")
+
+    async def test_done_question_read_file_paging_all_is_delivered(self) -> None:
+        bot = _StubBot()
+
+        prev = os.environ.get("TG_TEXT_MAX_CHARS")
+        os.environ["TG_TEXT_MAX_CHARS"] = "200"
+        try:
+            async with _session() as session:
+                res = await session.execute(
+                    sa.text(
+                        "INSERT INTO users (tg_id, username, first_name) "
+                        "VALUES (:tg_id, NULL, NULL) "
+                        "ON CONFLICT (tg_id) DO UPDATE SET tg_id = EXCLUDED.tg_id "
+                        "RETURNING id"
+                    ),
+                    {"tg_id": 9023},
+                )
+                user_id = int(res.scalar_one())
+
+                res = await session.execute(
+                    sa.text(
+                        "INSERT INTO tasks (created_by_user_id, project_id, source, external_key, title, status) "
+                        "VALUES (:uid, NULL, 'telegram', NULL, 'q_paging_all', 'DONE') "
+                        "RETURNING id"
+                    ),
+                    {"uid": user_id},
+                )
+                task_id = int(res.scalar_one())
+
+                await session.execute(
+                    sa.text(
+                        "INSERT INTO task_transitions (task_id, from_status, to_status, actor_user_id, reason) "
+                        "VALUES (:tid, 'RUNNING', 'DONE', NULL, 'test')"
+                    ),
+                    {"tid": task_id},
+                )
+                await session.execute(
+                    sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'raw_input', CAST(:c AS jsonb))"),
+                    {
+                        "tid": task_id,
+                        "c": json.dumps(
+                            {"kind": "question", "text": "send file", "tg": {"chat_id": 55558, "tg_id": 9023}, "event_id": 1},
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    },
+                )
+                answer = "B" * 5000
+                await session.execute(
+                    sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'llm_result', CAST(:c AS jsonb))"),
+                    {
+                        "tid": task_id,
+                        "c": json.dumps(
+                            {
+                                "llm_request_id": 23,
+                                "purpose": "read_file_paging_all",
+                                "answer": answer,
+                                "clarify_question": None,
+                                "json_invalid": False,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    },
+                )
+                await session.commit()
+
+            async with _session() as session:
+                sent = await process_core_done_notifications(session, bot, limit=1)
+                await session.commit()
+                self.assertEqual(sent, 1)
+
+            self.assertGreaterEqual(len(bot.sent_docs), 1)
+            _cid, filename, data, caption = bot.sent_docs[0]
+            self.assertTrue(filename.endswith(".txt"))
+            self.assertIn("Приложено файлом", caption)
+            self.assertEqual(len(data), 5000)
+        finally:
+            if prev is None:
+                os.environ.pop("TG_TEXT_MAX_CHARS", None)
+            else:
+                os.environ["TG_TEXT_MAX_CHARS"] = prev
 
     async def test_codegen_result_is_notified_once(self) -> None:
         bot = _StubBot()

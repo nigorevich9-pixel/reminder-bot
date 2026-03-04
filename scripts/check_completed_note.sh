@@ -25,7 +25,18 @@ if [[ -z "${base_ref}" ]]; then
   exit 0
 fi
 
-changed="$(git diff --name-only "${base_ref}...HEAD" --)"
+changed_commits="$(git diff --name-only "${base_ref}...HEAD" -- || true)"
+changed_worktree="$(git diff --name-only -- || true)"
+changed_cached="$(git diff --name-only --cached -- || true)"
+changed_untracked="$(git ls-files --others --exclude-standard -- || true)"
+changed="$(
+  {
+    printf '%s\n' "${changed_commits}"
+    printf '%s\n' "${changed_worktree}"
+    printf '%s\n' "${changed_cached}"
+    printf '%s\n' "${changed_untracked}"
+  } | sort -u
+)"
 non_doc="$(printf '%s\n' "${changed}" | grep -vE '^docs/' || true)"
 
 if [[ -z "${non_doc}" ]]; then
