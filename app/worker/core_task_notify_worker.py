@@ -121,6 +121,34 @@ def _format_clarify_message(*, task_id: int, question: str) -> str:
     )
 
 
+def _safe_filename_piece(s: str) -> str:
+    raw = str(s or "").strip()
+    if not raw:
+        return "file"
+    out = []
+    for ch in raw:
+        if ch.isalnum():
+            out.append(ch)
+        elif ch in {"-", "_", "."}:
+            out.append(ch)
+        else:
+            out.append("_")
+    s2 = "".join(out).strip("._")
+    return s2[:80] if s2 else "file"
+
+
+def _format_read_file_paging_message(*, task_id: int, path: str, part_no: int) -> str:
+    p = _safe_filename_piece(path)
+    return (
+        f"task #{task_id}\n\n"
+        f"Файл большой: {p}\n"
+        f"Часть: {int(part_no)}\n\n"
+        f"Следующая часть:\n/ask {task_id} next\n\n"
+        f"Весь файл одним .txt:\n/ask {task_id} all\n\n"
+        f"Details: /task {task_id}"
+    ).strip()
+
+
 def _format_codegen_message(
     *,
     task_id: int,
@@ -658,8 +686,9 @@ async def _process_one_waiting_user(session: AsyncSession, bot: Bot) -> bool:
 
     chat_id = _extract_chat_id(raw_input)
     question = _extract_clarify_question(llm_result or {}) or _extract_waiting_reason_question(waiting_reason)
+    answer = _extract_answer_text(llm_result or {})
 
-    if chat_id is None or question is None:
+    if chat_id is None or (question is None and answer is None):
         await _send_with_tg_delivery_trace(
             session,
             bot,
@@ -673,13 +702,26 @@ async def _process_one_waiting_user(session: AsyncSession, bot: Bot) -> bool:
         await session.commit()
         return True
 
-    msg = _format_clarify_message(task_id=task_id, question=question)
+    msg = None
+    document = None
+    if question is not None:
+        msg = _format_clarify_message(task_id=task_id, question=question)
+    elif isinstance(waiting_reason, dict) and waiting_reason.get("type") == "read_file_paging" and answer is not None:
+        part_no = waiting_reason.get("part_no") if isinstance(waiting_reason.get("part_no"), int) else 1
+        path = waiting_reason.get("path") if isinstance(waiting_reason.get("path"), str) else "file"
+        msg = _format_read_file_paging_message(task_id=task_id, path=path, part_no=int(part_no))
+        filename = f"task_{task_id}_{_safe_filename_piece(path)}_part{int(part_no)}.txt"
+        document = (filename, answer.encode("utf-8", errors="replace"))
+    elif answer is not None:
+        msg = _format_answer_only_message(task_id=task_id, answer=answer)
+
     await _send_with_tg_delivery_trace(
         session,
         bot,
         task_id=task_id,
         chat_id=chat_id,
         text=msg,
+        document=document,
         message_kind="waiting_user",
         to_status=str(task.get("status") or ""),
         llm_request_id=int(active_llm_request_id) if isinstance(active_llm_request_id, int) else None,
@@ -795,10 +837,12 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
                 msg = _format_message(task_id=task_id, question=question, answer=answer)
             else:
                 msg = _format_answer_only_message(task_id=task_id, answer=answer)
-            if isinstance(answer, str) and isinstance(pretty, str) and len(msg or "") > _tg_text_max_chars():
-                filename = f"task_{task_id}_answer.json"
+            if isinstance(answer, str) and len(msg or "") > _tg_text_max_chars():
+                raw2 = _strip_markdown_fences(answer).lstrip()
+                ext = "json" if (raw2.startswith("{") or raw2.startswith("[")) else "txt"
+                filename = f"task_{task_id}_answer.{ext}"
                 document = (filename, answer.encode("utf-8", errors="replace"))
-                placeholder = f"(JSON приложен файлом: {filename})"
+                placeholder = f"(Приложено файлом: {filename})"
                 if question:
                     msg = _format_message(task_id=task_id, question=question, answer=placeholder)
                 else:
@@ -832,13 +876,15 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
                     lines.append(title)
                 lines.extend(["", "DONE", "", "answer:", answer, "", f"Details: /task {task_id}"])
                 msg = "\n".join(lines).strip()
-                if isinstance(answer, str) and isinstance(pretty, str) and len(msg or "") > _tg_text_max_chars():
-                    filename = f"task_{task_id}_answer.json"
+                if isinstance(answer, str) and len(msg or "") > _tg_text_max_chars():
+                    raw2 = _strip_markdown_fences(answer).lstrip()
+                    ext = "json" if (raw2.startswith("{") or raw2.startswith("[")) else "txt"
+                    filename = f"task_{task_id}_answer.{ext}"
                     document = (filename, answer.encode("utf-8", errors="replace"))
                     lines2 = [f"task #{task_id}"]
                     if title:
                         lines2.append(title)
-                    lines2.extend(["", "DONE", "", "answer:", f"(JSON приложен файлом: {filename})", "", f"Details: /task {task_id}"])
+                    lines2.extend(["", "DONE", "", "answer:", f"(Приложено файлом: {filename})", "", f"Details: /task {task_id}"])
                     msg = "\n".join(lines2).strip()
     if not msg:
         msg = _format_done_fallback_message(task_id=task_id, title=str(task.get("title") or ""))

@@ -142,7 +142,7 @@ class CoreTasksRepository:
                 "SELECT content "
                 "FROM task_details "
                 "WHERE task_id = :task_id AND kind = 'llm_result' "
-                "AND (content->>'purpose' IS NULL OR content->>'purpose' IN ('', 'tool_loop', 'json_retry', 'question_rework', 'question_review_limit')) "
+                "AND (content->>'purpose' IS NULL OR content->>'purpose' IN ('', 'tool_loop', 'json_retry', 'question_rework', 'question_review_limit', 'read_file_paging_next', 'read_file_paging_all')) "
                 "ORDER BY id DESC LIMIT 5"
             ),
             {"task_id": task_id},
@@ -191,7 +191,7 @@ class CoreTasksRepository:
                 "SELECT content "
                 "FROM task_details "
                 "WHERE task_id = :task_id AND kind = 'llm_result' "
-                "AND (content->>'purpose' IS NULL OR content->>'purpose' IN ('', 'tool_loop', 'json_retry', 'question_rework', 'question_review_limit')) "
+                "AND (content->>'purpose' IS NULL OR content->>'purpose' IN ('', 'tool_loop', 'json_retry', 'question_rework', 'question_review_limit', 'read_file_paging_next', 'read_file_paging_all')) "
                 "ORDER BY id DESC LIMIT 1"
             ),
             {"task_id": task_id},
@@ -437,7 +437,7 @@ class CoreTasksRepository:
                 "  EXISTS ("
                 "    SELECT 1 FROM task_details d "
                 "    WHERE d.task_id = t.id AND d.kind = 'llm_result' AND COALESCE(d.content->>'answer','') <> ''"
-                "      AND (d.content->>'purpose' IS NULL OR d.content->>'purpose' IN ('', 'json_retry', 'question_rework', 'question_review_limit')) "
+                "      AND (d.content->>'purpose' IS NULL OR d.content->>'purpose' IN ('', 'tool_loop', 'json_retry', 'question_rework', 'question_review_limit', 'read_file_paging_next', 'read_file_paging_all')) "
                 "  ) "
                 "  OR EXISTS ("
                 "    SELECT 1 FROM task_details d "
