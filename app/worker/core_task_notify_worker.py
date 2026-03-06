@@ -225,6 +225,37 @@ def _extract_json_answer(raw_answer: str | None) -> str | None:
     return raw
 
 
+def _document_bytes_from_answer(answer_raw: str) -> tuple[str, bytes]:
+    raw_no_fences = _strip_markdown_fences(answer_raw)
+    head = raw_no_fences.lstrip()
+    ext = "json" if (head.startswith("{") or head.startswith("[")) else "txt"
+    if ext == "json":
+        try:
+            obj = json.loads(head)
+            pretty = json.dumps(obj, ensure_ascii=False, indent=2).rstrip() + "\n"
+            return ext, pretty.encode("utf-8", errors="replace")
+        except Exception:
+            pass
+    return ext, raw_no_fences.encode("utf-8", errors="replace")
+
+def _pretty_json_no_prune(text: str | None) -> str | None:
+    if not isinstance(text, str):
+        return text
+    raw = _strip_markdown_fences(text)
+    if not raw or not (raw.startswith("{") or raw.startswith("[")):
+        return text
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return text
+    if not isinstance(obj, (dict, list)):
+        return text
+    try:
+        return json.dumps(obj, ensure_ascii=False, indent=2)
+    except Exception:
+        return text
+
+
 def _maybe_pretty_json_for_tg(text: str | None) -> str | None:
     if not isinstance(text, str):
         return text
@@ -237,6 +268,15 @@ def _maybe_pretty_json_for_tg(text: str | None) -> str | None:
         return text
     if not isinstance(obj, (dict, list)):
         return text
+
+    # Always keep content intact by default. If Telegram text limits are hit,
+    # we rely on the normal truncation / file-delivery path instead.
+    prune_enabled = bool(_env_int("TG_PRETTY_JSON_PRUNE", 0))
+    if not prune_enabled:
+        try:
+            return json.dumps(obj, ensure_ascii=False, indent=2)
+        except Exception:
+            return text
 
     max_depth = max(_env_int("TG_PRETTY_JSON_MAX_DEPTH", 4), 1)
     max_items = max(_env_int("TG_PRETTY_JSON_MAX_ITEMS", 30), 1)
@@ -288,7 +328,7 @@ def _format_needs_review_message(
 ) -> str:
     lines = [f"task #{task_id}", "", "NEEDS_REVIEW"]
     if answer:
-        lines.extend(["", "answer:", _maybe_pretty_json_for_tg(answer) or answer])
+        lines.extend(["", "answer:", answer])
     if llm_error:
         lines.extend(["", "llm_error:", llm_error])
     if pr_url and pr_error:
@@ -558,19 +598,34 @@ async def _process_one_needs_review(session: AsyncSession, bot: Bot) -> bool:
         pr_url = job.get("pr_url") if isinstance(job.get("pr_url"), str) and job.get("pr_url").strip() else None
         pr_error = job.get("error") if isinstance(job.get("error"), str) and job.get("error").strip() else None
 
+    answer_raw = answer
+    answer_for_msg = _pretty_json_no_prune(answer_raw) if isinstance(answer_raw, str) else answer_raw
     msg = _format_needs_review_message(
         task_id=task_id,
-        answer=answer,
+        answer=answer_for_msg,
         llm_error=llm_error,
         pr_url=pr_url,
         pr_error=pr_error,
     )
+    document = None
+    if isinstance(answer_raw, str) and len(msg or "") > _tg_text_max_chars():
+        ext, b = _document_bytes_from_answer(answer_raw)
+        filename = f"task_{task_id}_answer.{ext}"
+        document = (filename, b)
+        msg = _format_needs_review_message(
+            task_id=task_id,
+            answer=f"(Приложено файлом: {filename})",
+            llm_error=llm_error,
+            pr_url=pr_url,
+            pr_error=pr_error,
+        )
     await _send_with_tg_delivery_trace(
         session,
         bot,
         task_id=task_id,
         chat_id=chat_id,
         text=msg,
+        document=document,
         message_kind="review_needed",
         to_status=str(task.get("status") or ""),
         transition_id=transition_id,
@@ -829,19 +884,18 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
         answer = await repo.get_latest_llm_answer(task_id=task_id)
         if answer is None:
             answer = _extract_answer_text(llm_result or {})
-        pretty = _maybe_pretty_json_for_tg(answer) if isinstance(answer, str) else None
-        if isinstance(pretty, str) and pretty.strip():
-            answer = pretty
+        answer_raw = answer
+        answer_for_msg = _pretty_json_no_prune(answer_raw) if isinstance(answer_raw, str) else answer_raw
+        answer = answer_for_msg
         if answer:
             if question:
                 msg = _format_message(task_id=task_id, question=question, answer=answer)
             else:
                 msg = _format_answer_only_message(task_id=task_id, answer=answer)
-            if isinstance(answer, str) and len(msg or "") > _tg_text_max_chars():
-                raw2 = _strip_markdown_fences(answer).lstrip()
-                ext = "json" if (raw2.startswith("{") or raw2.startswith("[")) else "txt"
+            if isinstance(answer_raw, str) and len(msg or "") > _tg_text_max_chars():
+                ext, b = _document_bytes_from_answer(answer_raw)
                 filename = f"task_{task_id}_answer.{ext}"
-                document = (filename, answer.encode("utf-8", errors="replace"))
+                document = (filename, b)
                 placeholder = f"(Приложено файлом: {filename})"
                 if question:
                     msg = _format_message(task_id=task_id, question=question, answer=placeholder)
@@ -866,9 +920,9 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
             )
         else:
             answer = _extract_answer_text(llm_result or {})
-            pretty = _maybe_pretty_json_for_tg(answer) if isinstance(answer, str) else None
-            if isinstance(pretty, str) and pretty.strip():
-                answer = pretty
+            answer_raw = answer
+            answer_for_msg = _pretty_json_no_prune(answer_raw) if isinstance(answer_raw, str) else answer_raw
+            answer = answer_for_msg
             if answer:
                 title = str(task.get("title") or "").strip()
                 lines = [f"task #{task_id}"]
@@ -876,11 +930,10 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
                     lines.append(title)
                 lines.extend(["", "DONE", "", "answer:", answer, "", f"Details: /task {task_id}"])
                 msg = "\n".join(lines).strip()
-                if isinstance(answer, str) and len(msg or "") > _tg_text_max_chars():
-                    raw2 = _strip_markdown_fences(answer).lstrip()
-                    ext = "json" if (raw2.startswith("{") or raw2.startswith("[")) else "txt"
+                if isinstance(answer_raw, str) and len(msg or "") > _tg_text_max_chars():
+                    ext, b = _document_bytes_from_answer(answer_raw)
                     filename = f"task_{task_id}_answer.{ext}"
-                    document = (filename, answer.encode("utf-8", errors="replace"))
+                    document = (filename, b)
                     lines2 = [f"task #{task_id}"]
                     if title:
                         lines2.append(title)
