@@ -39,6 +39,11 @@ class CoreTasksRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
+    def _llm_purpose_filter_sql(self) -> str:
+        # Keep this as a denylist to stay forward-compatible with new purposes in core.
+        # We only exclude reviewer loops; everything else is treated as a candidate result.
+        return "(content->>'purpose' IS NULL OR content->>'purpose' NOT IN ('question_review', 'review_loop'))"
+
     async def insert_event(self, *, source: str, external_id: str, payload: dict) -> int:
         event_type = _payload_get_str(payload, "event_type")
         tg_id = _payload_get_int(payload, "tg", "tg_id")
@@ -142,7 +147,7 @@ class CoreTasksRepository:
                 "SELECT content "
                 "FROM task_details "
                 "WHERE task_id = :task_id AND kind = 'llm_result' "
-                "AND (content->>'purpose' IS NULL OR content->>'purpose' IN ('', 'tool_loop', 'json_retry', 'question_rework', 'question_review_limit', 'read_file_paging_next', 'read_file_paging_all')) "
+                "AND " + self._llm_purpose_filter_sql() + " "
                 "ORDER BY id DESC LIMIT 5"
             ),
             {"task_id": task_id},
@@ -191,7 +196,7 @@ class CoreTasksRepository:
                 "SELECT content "
                 "FROM task_details "
                 "WHERE task_id = :task_id AND kind = 'llm_result' "
-                "AND (content->>'purpose' IS NULL OR content->>'purpose' IN ('', 'tool_loop', 'json_retry', 'question_rework', 'question_review_limit', 'read_file_paging_next', 'read_file_paging_all')) "
+                "AND " + self._llm_purpose_filter_sql() + " "
                 "ORDER BY id DESC LIMIT 1"
             ),
             {"task_id": task_id},
@@ -437,7 +442,7 @@ class CoreTasksRepository:
                 "  EXISTS ("
                 "    SELECT 1 FROM task_details d "
                 "    WHERE d.task_id = t.id AND d.kind = 'llm_result' AND COALESCE(d.content->>'answer','') <> ''"
-                "      AND (d.content->>'purpose' IS NULL OR d.content->>'purpose' IN ('', 'tool_loop', 'json_retry', 'question_rework', 'question_review_limit', 'read_file_paging_next', 'read_file_paging_all')) "
+                "      AND (d.content->>'purpose' IS NULL OR d.content->>'purpose' NOT IN ('question_review', 'review_loop')) "
                 "  ) "
                 "  OR EXISTS ("
                 "    SELECT 1 FROM task_details d "
@@ -449,6 +454,67 @@ class CoreTasksRepository:
                 "  OR (del.status = 'failed' AND del.retryable IS TRUE AND (del.next_attempt_at IS NULL OR del.next_attempt_at <= now()))"
                 ") "
                 "ORDER BY tr.transition_id ASC "
+                "LIMIT 1 "
+                "FOR UPDATE OF t SKIP LOCKED"
+            )
+        )
+        row = res.mappings().first()
+        return dict(row) if row else None
+
+    async def pop_one_task_for_done_notify_fallback(self) -> dict | None:
+        # Fallback path for environments where core may update tasks.status without inserting task_transitions.
+        # Uses per-task idempotency: we skip if any 'final' delivery was sent.
+        res = await self._session.execute(
+            sa.text(
+                "SELECT t.id, t.title, t.status, t.created_at, t.updated_at, NULL::int AS transition_id, "
+                "  del.status AS delivery_status, del.attempt_no AS delivery_attempt_no, del.next_attempt_at AS delivery_next_attempt_at "
+                "FROM tasks t "
+                "LEFT JOIN LATERAL ("
+                "  SELECT "
+                "    d.content->>'status' AS status, "
+                "    NULLIF(d.content->>'attempt_no','')::int AS attempt_no, "
+                "    NULLIF(d.content->>'retryable','')::boolean AS retryable, "
+                "    NULLIF(d.content->>'next_attempt_at','')::timestamptz AS next_attempt_at "
+                "  FROM task_details d "
+                "  WHERE d.task_id = t.id AND d.kind = 'tg_delivery' "
+                "    AND d.content->>'channel' = 'tg' "
+                "    AND d.content->>'message_kind' = 'final' "
+                "    AND d.content->>'message_version' = '1' "
+                "  ORDER BY d.id DESC LIMIT 1"
+                ") del ON true "
+                "WHERE t.status = 'DONE' "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM task_transitions tr "
+                "  WHERE tr.task_id = t.id AND tr.to_status = 'DONE'"
+                ") "
+                "AND EXISTS ("
+                "  SELECT 1 FROM task_details d "
+                "  WHERE d.task_id = t.id AND d.kind = 'raw_input'"
+                ") "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM task_details d "
+                "  WHERE d.task_id = t.id AND d.kind = 'tg_delivery' "
+                "    AND d.content->>'channel' = 'tg' "
+                "    AND d.content->>'message_kind' = 'final' "
+                "    AND d.content->>'message_version' = '1' "
+                "    AND d.content->>'status' = 'sent'"
+                ") "
+                "AND ("
+                "  EXISTS ("
+                "    SELECT 1 FROM task_details d "
+                "    WHERE d.task_id = t.id AND d.kind = 'llm_result' AND COALESCE(d.content->>'answer','') <> ''"
+                "      AND (d.content->>'purpose' IS NULL OR d.content->>'purpose' NOT IN ('question_review', 'review_loop')) "
+                "  ) "
+                "  OR EXISTS ("
+                "    SELECT 1 FROM task_details d "
+                "    WHERE d.task_id = t.id AND d.kind = 'codegen_result'"
+                "  )"
+                ") "
+                "AND ("
+                "  del.status IS NULL "
+                "  OR (del.status = 'failed' AND del.retryable IS TRUE AND (del.next_attempt_at IS NULL OR del.next_attempt_at <= now()))"
+                ") "
+                "ORDER BY t.updated_at ASC "
                 "LIMIT 1 "
                 "FOR UPDATE OF t SKIP LOCKED"
             )
@@ -501,7 +567,7 @@ class CoreTasksRepository:
                 "  EXISTS ("
                 "    SELECT 1 FROM task_details d "
                 "    WHERE d.task_id = t.id AND d.kind = 'llm_result' AND COALESCE(d.content->>'error','') <> ''"
-                "      AND (d.content->>'purpose' IS NULL OR d.content->>'purpose' IN ('', 'json_retry', 'question_rework', 'question_review_limit')) "
+                "      AND (d.content->>'purpose' IS NULL OR d.content->>'purpose' NOT IN ('question_review', 'review_loop')) "
                 "  ) "
                 "  OR EXISTS ("
                 "    SELECT 1 FROM codegen_jobs cj "
