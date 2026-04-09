@@ -30,6 +30,7 @@ from app.utils.datetime import build_user_datetime, format_user_datetime, parse_
 router = Router()
 
 TELEGRAM_MESSAGE_MAX_LEN = 4096
+FRIDGE_DOMAIN = "fridge"
 
 TYPE_OPTIONS = {
     "Разово": "one_time",
@@ -143,6 +144,150 @@ def _format_reminders(reminders) -> str:
     return "\n\n".join(parts)
 
 
+def _parse_fridge_item_line(line: str) -> dict | None:
+    raw = (line or "").strip()
+    if not raw:
+        return None
+    parts = raw.split()
+    if len(parts) < 3:
+        return None
+
+    def _is_number(s: str) -> bool:
+        s = (s or "").strip()
+        if not s:
+            return False
+        s = s.replace(",", ".")
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+
+    def _fmt_qty(v: float) -> str:
+        if abs(v - round(v)) < 1e-9:
+            return str(int(round(v)))
+        s = f"{v:.3f}".rstrip("0").rstrip(".")
+        return s or str(v)
+
+    def _normalize_unit_and_quantity(qty_s: str, unit_s: str) -> tuple[str, str] | None:
+        u0 = (unit_s or "").strip().lower()
+        if not u0:
+            return None
+        # Canonical units in core: piece|g|ml. Normalize common aliases here.
+        unit_map = {
+            "g": "g",
+            "gram": "g",
+            "grams": "g",
+            "гр": "g",
+            "г": "g",
+            "ml": "ml",
+            "мл": "ml",
+            "piece": "piece",
+            "pc": "piece",
+            "pcs": "piece",
+            "шт": "piece",
+            "штука": "piece",
+            "штук": "piece",
+            "portion": "piece",
+            "jar": "piece",
+            "pack": "piece",
+        }
+        if u0 in {"l", "liter", "litre"}:
+            try:
+                q = float((qty_s or "").strip().replace(",", "."))
+            except Exception:
+                return None
+            return (_fmt_qty(q * 1000.0), "ml")
+        if u0 in {"kg"}:
+            try:
+                q = float((qty_s or "").strip().replace(",", "."))
+            except Exception:
+                return None
+            return (_fmt_qty(q * 1000.0), "g")
+        u = unit_map.get(u0)
+        if not u:
+            return None
+        return ((qty_s or "").strip().replace(",", "."), u)
+
+    # Expected format (name can contain spaces):
+    # <name...> <qty> <unit> [key=value ...]
+    attrs: list[str] = []
+    while parts and "=" in parts[-1]:
+        attrs.append(parts.pop())
+    attrs.reverse()
+
+    if len(parts) < 3:
+        return None
+    qty = parts[-2].strip()
+    unit = parts[-1].strip()
+    name = " ".join(p.strip() for p in parts[:-2]).strip()
+    if not name or not unit or not _is_number(qty):
+        return None
+    norm = _normalize_unit_and_quantity(qty, unit)
+    if norm is None:
+        return None
+    qty_norm, unit_norm = norm
+
+    item: dict = {"name": name, "quantity": qty_norm, "unit": unit_norm}
+    for tok in attrs:
+        t = tok.strip()
+        if not t:
+            continue
+        if "=" not in t:
+            continue
+        k, v = t.split("=", 1)
+        k = k.strip().lower()
+        v = v.strip()
+        if not k:
+            continue
+        if k in {"status", "food_type", "note"}:
+            item[k] = v
+        elif k in {"expires_on", "expires", "exp"}:
+            item["expires_on"] = v
+        elif k in {"purchased_on", "purchased", "buy"}:
+            item["purchased_on"] = v
+        elif k in {"servings_total", "servings"}:
+            item["servings_total"] = v
+        elif k in {"kcal_per_100g", "protein_per_100g", "fat_per_100g", "carbs_per_100g", "density_g_per_ml"}:
+            macros = item.get("macros")
+            if not isinstance(macros, dict):
+                macros = {}
+            macros[k] = v
+            item["macros"] = macros
+    return item
+
+
+async def _insert_fridge_request(
+    session: AsyncSession,
+    message: Message,
+    *,
+    kind: str,
+    text: str,
+    fridge_action: dict,
+) -> None:
+    await _get_or_create_user(session, message)
+    repo = CoreTasksRepository(session)
+    payload = {
+        "event_type": "user_request",
+        "tg": {
+            "tg_id": message.from_user.id,
+            "chat_id": message.chat.id,
+            "message_id": message.message_id,
+        },
+        "request": {
+            "kind": kind,
+            "text": text.strip(),
+            "domain": FRIDGE_DOMAIN,
+            "auto_run": True,
+            "fridge_action": fridge_action,
+            "project_id": None,
+            "attachments": [],
+        },
+    }
+    external_id = f"{message.chat.id}:{message.message_id}"
+    await repo.insert_event(source="telegram", external_id=external_id, payload=payload)
+
+
 def _time_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -183,6 +328,11 @@ async def start_handler(message: Message, session: AsyncSession):
         "/disable — отключить уведомление\n"
         "/delete — удалить уведомление\n"
         "/core — вопрос/задача для оркестратора\n"
+        "/fridge — что в холодильнике\n"
+        "/fridge_add — добавить продукты/еду\n"
+        "/fridge_remove — убрать продукты/еду\n"
+        "/fridge_update — добавить/убрать по тексту\n"
+        "/meal — рекомендация (завтрак/обед/ужин/день/неделя)\n"
         "/task <id> — статус задачи\n"
         "/tasks — список твоих задач\n"
         "/run <task_id> — запустить задачу/вопрос\n"
@@ -516,6 +666,161 @@ async def ask_task_handler(message: Message, session: AsyncSession):
     await _insert_core_command(session, message, name="ask", task_id=task_id, text=text)
     await session.commit()
     await message.answer(f"Ок. Отправил ask для task #{task_id}.")
+
+
+@router.message(Command("fridge"))
+async def fridge_list_handler(message: Message, session: AsyncSession):
+    txt = (message.text or "").strip()
+    include_expired = "--expired" in txt or "expired" in txt
+    await _insert_fridge_request(
+        session,
+        message,
+        kind="task",
+        text="fridge inventory",
+        fridge_action={"type": "inventory_list", "include_expired": bool(include_expired)},
+    )
+    await session.commit()
+    await message.answer("Ок. Проверяю холодильник…")
+
+
+@router.message(Command("fridge_add"))
+async def fridge_add_handler(message: Message, session: AsyncSession):
+    raw = message.text or ""
+    lines = raw.splitlines()
+    first = lines[0] if lines else raw
+    first_parts = first.split(maxsplit=1)
+    items_lines: list[str] = []
+    if len(first_parts) == 2:
+        items_lines.append(first_parts[1])
+    items_lines.extend(lines[1:])
+    items = []
+    for line in items_lines:
+        it = _parse_fridge_item_line(line)
+        if it is not None:
+            items.append(it)
+    if not items:
+        await message.answer(
+            "Использование:\n"
+            "/fridge_add <name...> <qty> <unit> [status=normal|frozen|thawed] [expires=YYYY-MM-DD] [purchased=YYYY-MM-DD] [kcal_per_100g=NUMBER]\n"
+            "Единицы: g/ml/piece (также можно: l→ml, kg→g, jar/pack/portion→piece)\n"
+            "Можно несколько строк:\n"
+            "/fridge_add\n"
+            "green apple 1 piece expires=2026-03-20 kcal_per_100g=52\n"
+            "milk 1 l status=normal kcal_per_100g=60"
+        )
+        return
+    await _insert_fridge_request(
+        session,
+        message,
+        kind="task",
+        text="fridge add",
+        fridge_action={"type": "add", "items": items},
+    )
+    await session.commit()
+    await message.answer("Ок. Добавляю…")
+
+
+@router.message(Command("fridge_remove"))
+async def fridge_remove_handler(message: Message, session: AsyncSession):
+    raw = message.text or ""
+    lines = raw.splitlines()
+    first = lines[0] if lines else raw
+    first_parts = first.split(maxsplit=1)
+    items_lines: list[str] = []
+    if len(first_parts) == 2:
+        items_lines.append(first_parts[1])
+    items_lines.extend(lines[1:])
+    items = []
+    for line in items_lines:
+        it = _parse_fridge_item_line(line)
+        if it is not None:
+            items.append(it)
+    if not items:
+        await message.answer(
+            "Использование:\n"
+            "/fridge_remove <name...> <qty> <unit>\n"
+            "Можно несколько строк:\n"
+            "/fridge_remove\n"
+            "green apple 0.25 piece\n"
+            "milk 250 ml"
+        )
+        return
+    await _insert_fridge_request(
+        session,
+        message,
+        kind="task",
+        text="fridge remove",
+        fridge_action={"type": "remove", "items": items},
+    )
+    await session.commit()
+    await message.answer("Ок. Списываю…")
+
+
+@router.message(Command("fridge_update"))
+async def fridge_update_handler(message: Message, session: AsyncSession):
+    raw = message.text or ""
+    lines = raw.splitlines()
+    first = lines[0] if lines else raw
+    first_parts = first.split(maxsplit=1)
+    text_lines: list[str] = []
+    if len(first_parts) == 2:
+        text_lines.append(first_parts[1])
+    text_lines.extend(lines[1:])
+    text = "\n".join([x.rstrip() for x in text_lines]).strip()
+    if not text:
+        await message.answer(
+            "Использование:\n"
+            "/fridge_update <что сделать>\n"
+            "Можно несколько строк, например:\n"
+            "/fridge_update\n"
+            "добавь литр молока\n"
+            "убери 2 йогурта"
+        )
+        return
+
+    # LLM-driven parsing in core; no auto-create for unknown foods.
+    await _insert_fridge_request(
+        session,
+        message,
+        kind="question",
+        text=f"fridge update\n{text}",
+        fridge_action={"type": "update", "text": text},
+    )
+    await session.commit()
+    await message.answer("Ок. Обновляю…")
+
+
+@router.message(Command("meal"))
+async def meal_recommend_handler(message: Message, session: AsyncSession):
+    args = (message.text or "").split()
+    meal = None
+    target_kcal = None
+    prefs: dict = {}
+    if len(args) >= 2:
+        meal = args[1].strip().lower()
+    for tok in args[2:]:
+        t = tok.strip()
+        if not t or "=" not in t:
+            continue
+        k, v = t.split("=", 1)
+        k = k.strip().lower()
+        v = v.strip()
+        if k in {"kcal", "target_kcal"}:
+            if v.isdigit():
+                target_kcal = int(v)
+        elif k in {"want", "like"}:
+            prefs["want"] = v
+        elif k in {"avoid", "dislike"}:
+            prefs["avoid"] = v
+    await _insert_fridge_request(
+        session,
+        message,
+        kind="question",
+        text=(message.text or "").strip() or "meal recommendation",
+        fridge_action={"type": "recommend", "meal": meal, "target_kcal": target_kcal, "preferences": prefs},
+    )
+    await session.commit()
+    await message.answer("Ок. Подбираю варианты…")
 
 
 @router.message(Command("task"))

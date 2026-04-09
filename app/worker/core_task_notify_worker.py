@@ -864,6 +864,8 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
     repo = CoreTasksRepository(session)
     task = await repo.pop_one_task_for_done_notify()
     if not task:
+        task = await repo.pop_one_task_for_done_notify_fallback()
+    if not task:
         return False
 
     task_id = int(task["id"])
@@ -876,6 +878,7 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
 
     chat_id = _extract_chat_id(raw_input or {})
     kind = (raw_input or {}).get("kind") if isinstance(raw_input, dict) else None
+    domain = (raw_input or {}).get("domain") if isinstance(raw_input, dict) else None
 
     msg = None
     document = None
@@ -924,21 +927,28 @@ async def _process_one_done(session: AsyncSession, bot: Bot) -> bool:
             answer_for_msg = _pretty_json_no_prune(answer_raw) if isinstance(answer_raw, str) else answer_raw
             answer = answer_for_msg
             if answer:
-                title = str(task.get("title") or "").strip()
-                lines = [f"task #{task_id}"]
-                if title:
-                    lines.append(title)
-                lines.extend(["", "DONE", "", "answer:", answer, "", f"Details: /task {task_id}"])
-                msg = "\n".join(lines).strip()
+                if domain == "fridge":
+                    lines = [f"task #{task_id}", "", str(answer)]
+                    msg = "\n".join(lines).strip()
+                else:
+                    title = str(task.get("title") or "").strip()
+                    lines = [f"task #{task_id}"]
+                    if title:
+                        lines.append(title)
+                    lines.extend(["", "DONE", "", "answer:", answer, "", f"Details: /task {task_id}"])
+                    msg = "\n".join(lines).strip()
                 if isinstance(answer_raw, str) and len(msg or "") > _tg_text_max_chars():
                     ext, b = _document_bytes_from_answer(answer_raw)
                     filename = f"task_{task_id}_answer.{ext}"
                     document = (filename, b)
-                    lines2 = [f"task #{task_id}"]
-                    if title:
-                        lines2.append(title)
-                    lines2.extend(["", "DONE", "", "answer:", f"(Приложено файлом: {filename})", "", f"Details: /task {task_id}"])
-                    msg = "\n".join(lines2).strip()
+                    if domain == "fridge":
+                        msg = "\n".join([f"task #{task_id}", "", f"(Приложено файлом: {filename})", "", f"Details: /task {task_id}"]).strip()
+                    else:
+                        lines2 = [f"task #{task_id}"]
+                        if title:
+                            lines2.append(title)
+                        lines2.extend(["", "DONE", "", "answer:", f"(Приложено файлом: {filename})", "", f"Details: /task {task_id}"])
+                        msg = "\n".join(lines2).strip()
     if not msg:
         msg = _format_done_fallback_message(task_id=task_id, title=str(task.get("title") or ""))
 
