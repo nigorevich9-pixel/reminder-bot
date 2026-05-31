@@ -56,6 +56,22 @@
   - в `task_details` ровно одна запись `tg_waiting_user_notified`
   - реально отправлено ровно одно сообщение в `bot.sent`
 
+Файл: `tests/test_work_plan_display.py`
+
+Pure unit tests для `app/utils/work_plan_display.py`:
+- latest row = draft после rejected (`NEEDS_USER_READ`)
+- latest rejected скрывает older draft/approved (`RUNNING`)
+- approved progress snapshot (in_progress marker)
+- `NEEDS_USER_READ` CTA (`/run`, `/ask`)
+- unknown item status не падает
+- >10 items → ellipsis
+
+#### `test_get_recent_work_plan_details_returns_ordered_rows`
+
+- **Что тестирует**: `CoreTasksRepository.get_recent_work_plan_details()` возвращает последние `work_plan` rows по `detail_id DESC` (`limit=30` = recent append-only snapshots, not full history).
+- **Данные**: task + 3 `task_details(kind=work_plan)` с разными `plan_status`.
+- **Проверки**: порядок `approved → rejected → draft`, каждый row содержит `detail_id`.
+
 ### Что пока не покрыто (идеи для следующих тестов)
 
 - Ошибки отправки в TG (`send_message` кидает исключение) и повторные попытки/поведение транзакции.

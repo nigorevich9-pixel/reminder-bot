@@ -94,7 +94,7 @@ Planned: `/core` будет отправлять unified “request” (сыро
 ### Orchestrator UI (core-orchestrator)
 - `/core` — создать “вопрос” или “задачу” для оркестратора
 - `/tasks` — список твоих задач (последние 20)
-- `/task <id>` — статус задачи + последний ответ LLM + (если есть) состояние codegen/PR
+- `/task <id>` — статус задачи + work plan (draft/approved, work_items, current step) + последний ответ LLM + (если есть) codegen/PR; для `NEEDS_USER_READ` — CTA `/run` / `/ask`
 - `/run <task_id>` — запустить задачу/вопрос (approval gate)
 - `/hold <task_id>` — остановить/отменить (core переведёт задачу в `STOPPED_BY_USER` и отменит очередь/кодоген)
 - `/ask <task_id> <text>` — ответ пользователем на уточняющий вопрос (если задача в `WAITING_USER`, core продолжит диалог и создаст новый `llm_request`)

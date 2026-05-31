@@ -133,6 +133,50 @@ class TestCoreEventsAndNotifyWorker(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(job.get("status"), "DONE")
             self.assertEqual(job.get("pr_url"), "https://example/pr/1")
 
+    async def test_get_recent_work_plan_details_returns_ordered_rows(self) -> None:
+        async with _session() as session:
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO users (tg_id, username, first_name) "
+                    "VALUES (:tg_id, NULL, NULL) "
+                    "ON CONFLICT (tg_id) DO UPDATE SET tg_id = EXCLUDED.tg_id "
+                    "RETURNING id"
+                ),
+                {"tg_id": 9011},
+            )
+            user_id = int(res.scalar_one())
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO tasks (created_by_user_id, project_id, source, external_key, title, status) "
+                    "VALUES (:uid, NULL, 'telegram', NULL, 'plan task', 'NEEDS_USER_READ') "
+                    "RETURNING id"
+                ),
+                {"uid": user_id},
+            )
+            task_id = int(res.scalar_one())
+            for idx, status in enumerate(["draft", "rejected", "approved"], start=1):
+                await session.execute(
+                    sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'work_plan', CAST(:c AS jsonb))"),
+                    {
+                        "tid": task_id,
+                        "c": json.dumps(
+                            {"plan_status": status, "goal": f"goal-{idx}", "work_items": []},
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    },
+                )
+            await session.commit()
+
+        async with _session() as session:
+            repo = CoreTasksRepository(session)
+            plans = await repo.get_recent_work_plan_details(task_id=task_id)
+            self.assertEqual(len(plans), 3)
+            self.assertEqual(plans[0]["content"].get("plan_status"), "approved")
+            self.assertEqual(plans[1]["content"].get("plan_status"), "rejected")
+            self.assertEqual(plans[2]["content"].get("plan_status"), "draft")
+            self.assertTrue(all(isinstance(p.get("detail_id"), int) for p in plans))
+
     async def test_done_is_notified_and_does_not_change_status(self) -> None:
         bot = _StubBot()
 

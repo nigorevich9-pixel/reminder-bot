@@ -243,6 +243,29 @@ class CoreTasksRepository:
         row = res.mappings().first()
         return dict(row) if row else None
 
+    async def get_recent_work_plan_details(self, *, task_id: int, limit: int = 30) -> list[dict]:
+        limit = max(min(int(limit), 100), 1)
+        res = await self._session.execute(
+            sa.text(
+                "SELECT id, content "
+                "FROM task_details "
+                "WHERE task_id = :task_id AND kind = 'work_plan' "
+                "ORDER BY id DESC "
+                "LIMIT :limit"
+            ),
+            {"task_id": task_id, "limit": limit},
+        )
+        rows = []
+        for row in res.mappings().all():
+            content = row.get("content")
+            rows.append(
+                {
+                    "detail_id": int(row["id"]),
+                    "content": dict(content) if isinstance(content, dict) else {},
+                }
+            )
+        return rows
+
     async def pop_one_task_for_waiting_user_notify(self) -> dict | None:
         res = await self._session.execute(
             sa.text(

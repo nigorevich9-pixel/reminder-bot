@@ -1,5 +1,8 @@
 # Reminder Service — Status
 
+## Текущее состояние (2026-05-31)
+- Patch D (work plan UI в `/task`): read-only отображение latest `work_plan` snapshot (draft/approved/rejected-replan), статусы `work_items`, current `in_progress` item; для `NEEDS_USER_READ` — CTA `/run` и `/ask`. Scan последних 30 append-only snapshots, не full history.
+
 ## Текущее состояние
 - Бот и воркер работают на VDS (systemd)
 - Jira в коде присутствует, но для текущей системы считается **deprecated** (см. `PROJECT.md`). По умолчанию `jira-worker` не запускаем.
