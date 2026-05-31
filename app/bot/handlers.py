@@ -25,6 +25,7 @@ from app.services.reminder_service import ReminderService
 from app.services.user_service import UserService
 from app.db import AsyncSessionLocal
 from app.utils.datetime import build_user_datetime, format_user_datetime, parse_user_date
+from app.utils.work_plan_display import format_work_plan_section, resolve_work_plan_display
 
 
 router = Router()
@@ -838,7 +839,13 @@ async def task_status_handler(message: Message, session: AsyncSession):
     llm_result = await repo.get_latest_llm_result(task_id=task_id)
     answer = await repo.get_latest_llm_answer(task_id=task_id)
     codegen_job = await repo.get_latest_codegen_job(task_id=task_id)
-    msg = f"task #{task['id']} • {task['status']}\n{task['title']}"
+    task_status = str(task["status"])
+    msg = f"task #{task['id']} • {task_status}\n{task['title']}"
+    work_plans = await repo.get_recent_work_plan_details(task_id=task_id)
+    display = resolve_work_plan_display(task_status=task_status, plans=work_plans)
+    plan_block = format_work_plan_section(task_id=task_id, task_status=task_status, display=display)
+    if plan_block:
+        msg += f"\n\n{plan_block}"
     if answer:
         msg += f"\n\nОтвет:\n{answer}"
     elif llm_result and isinstance(llm_result.get("clarify_question"), str) and llm_result.get("clarify_question").strip():
