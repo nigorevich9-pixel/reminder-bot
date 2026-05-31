@@ -326,6 +326,8 @@ def _format_needs_review_message(
     pr_url: str | None,
     pr_error: str | None,
 ) -> str:
+    from app.utils.human_review_display import format_needs_review_cta
+
     lines = [f"task #{task_id}", "", "NEEDS_REVIEW"]
     if answer:
         lines.extend(["", "answer:", answer])
@@ -333,6 +335,9 @@ def _format_needs_review_message(
         lines.extend(["", "llm_error:", llm_error])
     if pr_url and pr_error:
         lines.extend(["", "pr_url:", pr_url, "", "pr_error:", pr_error])
+    elif pr_url:
+        lines.extend(["", "pr_url:", pr_url])
+    lines.extend(["", format_needs_review_cta(task_id=task_id, pr_url=pr_url)])
     return "\n".join(lines).strip()
 
 def _format_done_task_message(

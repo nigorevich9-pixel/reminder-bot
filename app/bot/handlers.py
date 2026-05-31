@@ -429,6 +429,13 @@ async def needs_review_handler(message: Message, session: AsyncSession):
         lines.append(f"- #{task_id} • {age_text} • {title_text}")
     lines.append("")
     lines.append("Подробности: /task <id>")
+    if tasks:
+        sample_id = tasks[0].get("id")
+        if isinstance(sample_id, int):
+            from app.utils.human_review_display import format_needs_review_cta
+
+            lines.append("")
+            lines.append(format_needs_review_cta(task_id=int(sample_id)))
     await message.answer("\n".join(lines))
 
 
@@ -664,6 +671,17 @@ async def ask_task_handler(message: Message, session: AsyncSession):
         return
     task_id = int(args[1].strip())
     text = args[2].strip()
+    repo = CoreTasksRepository(session)
+    task = await repo.get_task(task_id=task_id)
+    if task and str(task.get("status")) == "NEEDS_REVIEW":
+        raw_input = await repo.get_raw_input(task_id=task_id)
+        raw_kind = raw_input.get("kind") if isinstance(raw_input, dict) and isinstance(raw_input.get("kind"), str) else None
+        if raw_kind == "question":
+            await message.answer(
+                f"Для question-задач отклонение из NEEDS_REVIEW пока не поддержано.\n"
+                f"Одобрить и закрыть: /run {task_id}"
+            )
+            return
     await _insert_core_command(session, message, name="ask", task_id=task_id, text=text)
     await session.commit()
     await message.answer(f"Ок. Отправил ask для task #{task_id}.")
@@ -863,6 +881,14 @@ async def task_status_handler(message: Message, session: AsyncSession):
             msg += f"\n\nCodegen:\n{status}"
             if status == "FAILED" and error:
                 msg += f"\n{error}"
+    if task_status == "NEEDS_REVIEW":
+        from app.utils.human_review_display import format_needs_review_cta
+
+        pr_url_for_cta = None
+        if codegen_job and isinstance(codegen_job.get("pr_url"), str):
+            pr_url_for_cta = codegen_job.get("pr_url")
+        cta = format_needs_review_cta(task_id=task_id, pr_url=pr_url_for_cta)
+        msg += f"\n\n{cta}"
     await _answer_text_or_file(message, text=msg, filename=f"task_{task_id}.txt")
 
 

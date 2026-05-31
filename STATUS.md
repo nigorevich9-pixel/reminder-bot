@@ -2,6 +2,7 @@
 
 ## Текущее состояние (2026-05-31)
 - Patch D (work plan UI в `/task`): read-only отображение latest `work_plan` snapshot (draft/approved/rejected-replan), статусы `work_items`, current `in_progress` item; для `NEEDS_USER_READ` — CTA `/run` и `/ask`. Scan последних 30 append-only snapshots, не full history.
+- Patch E (human NEEDS_REVIEW UI): CTA в `/task`, `/needs_review`, push-notify; `/ask` pre-check для `kind=question`; explicit «закрыть задачу» / «на доработку» wording.
 
 ## Текущее состояние
 - Бот и воркер работают на VDS (systemd)
