@@ -1,6 +1,8 @@
 # Reminder Service — Status
 
+> Last reviewed: 2026-06-01.
 > Документ описывает **текущее** состояние проекта на VDS (systemd, актуальный код, поведение воркеров). Канонический обзор — в `PROJECT.md`, канонические сценарии — в `/root/core-orchestrator/SCENARIOS.md`.
+> Полный roadmap / backlog / known issues собраны в `ROADMAP.md` (см. также `/root/server-docs/docs/roadmap.md` для system-level).
 
 ## Текущее состояние (snapshot)
 
