@@ -864,6 +864,22 @@ async def task_status_handler(message: Message, session: AsyncSession):
     plan_block = format_work_plan_section(task_id=task_id, task_status=task_status, display=display)
     if plan_block:
         msg += f"\n\n{plan_block}"
+
+    # --- B-markdown-checks: Review checks section (PR4) ---
+    rc_summary = await repo.get_latest_review_checks_summary(task_id=task_id)
+    if rc_summary:
+        rc_iter = rc_summary["content"].get("review_iter")
+        rc_results: list[dict] = []
+        if isinstance(rc_iter, int):
+            rc_results = await repo.get_review_check_results_for_iter(
+                task_id=task_id, review_iter=rc_iter
+            )
+        from app.utils.review_checks_display import format_review_checks_section as _rc_fmt
+        rc_block = _rc_fmt(summary=rc_summary["content"], check_results=rc_results)
+        if rc_block:
+            msg += f"\n\n{rc_block}"
+    # --- end B-markdown-checks ---
+
     if answer:
         msg += f"\n\nОтвет:\n{answer}"
     elif llm_result and isinstance(llm_result.get("clarify_question"), str) and llm_result.get("clarify_question").strip():
