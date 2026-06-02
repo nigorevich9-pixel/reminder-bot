@@ -864,6 +864,22 @@ async def task_status_handler(message: Message, session: AsyncSession):
     plan_block = format_work_plan_section(task_id=task_id, task_status=task_status, display=display)
     if plan_block:
         msg += f"\n\n{plan_block}"
+    checks_summary = await repo.get_latest_review_checks_summary(task_id=task_id)
+    if checks_summary:
+        from app.utils.review_checks_display import format_review_checks_section
+
+        review_iter = checks_summary.get("review_iter")
+        iter_no = int(review_iter) if isinstance(review_iter, int) else None
+        if iter_no is None and isinstance(review_iter, str) and review_iter.isdigit():
+            iter_no = int(review_iter)
+        results = await repo.get_review_check_results_for_iter(task_id=task_id, review_iter=iter_no or 1)
+        checks_block = format_review_checks_section(
+            review_iter=iter_no,
+            summary=checks_summary,
+            results=results,
+        )
+        if checks_block:
+            msg += f"\n\n{checks_block}"
     if answer:
         msg += f"\n\nОтвет:\n{answer}"
     elif llm_result and isinstance(llm_result.get("clarify_question"), str) and llm_result.get("clarify_question").strip():

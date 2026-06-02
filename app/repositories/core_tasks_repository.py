@@ -42,7 +42,7 @@ class CoreTasksRepository:
     def _llm_purpose_filter_sql(self) -> str:
         # Keep this as a denylist to stay forward-compatible with new purposes in core.
         # We only exclude reviewer loops; everything else is treated as a candidate result.
-        return "(content->>'purpose' IS NULL OR content->>'purpose' NOT IN ('question_review', 'review_loop'))"
+        return "(content->>'purpose' IS NULL OR content->>'purpose' NOT IN ('question_review', 'review_loop', 'review_check', 'review_check'))"
 
     async def insert_event(self, *, source: str, external_id: str, payload: dict) -> int:
         event_type = _payload_get_str(payload, "event_type")
@@ -216,6 +216,37 @@ class CoreTasksRepository:
         )
         row = res.mappings().first()
         return dict(row["content"]) if row and isinstance(row.get("content"), dict) else None
+
+    async def get_latest_review_checks_summary(self, *, task_id: int) -> dict | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT content "
+                "FROM task_details "
+                "WHERE task_id = :task_id AND kind = 'review_checks_summary' "
+                "ORDER BY id DESC LIMIT 1"
+            ),
+            {"task_id": task_id},
+        )
+        row = res.mappings().first()
+        return dict(row["content"]) if row and isinstance(row.get("content"), dict) else None
+
+    async def get_review_check_results_for_iter(self, *, task_id: int, review_iter: int) -> list[dict]:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT content "
+                "FROM task_details "
+                "WHERE task_id = :task_id AND kind = 'review_check_result' "
+                "AND CAST(content->>'review_iter' AS int) = :review_iter "
+                "ORDER BY id ASC"
+            ),
+            {"task_id": task_id, "review_iter": int(review_iter)},
+        )
+        out: list[dict] = []
+        for row in res.mappings().all():
+            content = row.get("content")
+            if isinstance(content, dict):
+                out.append(dict(content))
+        return out
 
     async def get_latest_codegen_result(self, *, task_id: int) -> dict | None:
         res = await self._session.execute(
@@ -465,7 +496,7 @@ class CoreTasksRepository:
                 "  EXISTS ("
                 "    SELECT 1 FROM task_details d "
                 "    WHERE d.task_id = t.id AND d.kind = 'llm_result' AND COALESCE(d.content->>'answer','') <> ''"
-                "      AND (d.content->>'purpose' IS NULL OR d.content->>'purpose' NOT IN ('question_review', 'review_loop')) "
+                "      AND (d.content->>'purpose' IS NULL OR d.content->>'purpose' NOT IN ('question_review', 'review_loop', 'review_check')) "
                 "  ) "
                 "  OR EXISTS ("
                 "    SELECT 1 FROM task_details d "
@@ -526,7 +557,7 @@ class CoreTasksRepository:
                 "  EXISTS ("
                 "    SELECT 1 FROM task_details d "
                 "    WHERE d.task_id = t.id AND d.kind = 'llm_result' AND COALESCE(d.content->>'answer','') <> ''"
-                "      AND (d.content->>'purpose' IS NULL OR d.content->>'purpose' NOT IN ('question_review', 'review_loop')) "
+                "      AND (d.content->>'purpose' IS NULL OR d.content->>'purpose' NOT IN ('question_review', 'review_loop', 'review_check')) "
                 "  ) "
                 "  OR EXISTS ("
                 "    SELECT 1 FROM task_details d "
@@ -590,7 +621,7 @@ class CoreTasksRepository:
                 "  EXISTS ("
                 "    SELECT 1 FROM task_details d "
                 "    WHERE d.task_id = t.id AND d.kind = 'llm_result' AND COALESCE(d.content->>'error','') <> ''"
-                "      AND (d.content->>'purpose' IS NULL OR d.content->>'purpose' NOT IN ('question_review', 'review_loop')) "
+                "      AND (d.content->>'purpose' IS NULL OR d.content->>'purpose' NOT IN ('question_review', 'review_loop', 'review_check')) "
                 "  ) "
                 "  OR EXISTS ("
                 "    SELECT 1 FROM codegen_jobs cj "

@@ -325,10 +325,15 @@ def _format_needs_review_message(
     llm_error: str | None,
     pr_url: str | None,
     pr_error: str | None,
+    checks_summary: dict | None = None,
 ) -> str:
     from app.utils.human_review_display import format_needs_review_cta
+    from app.utils.review_checks_display import format_review_checks_notify_summary
 
     lines = [f"task #{task_id}", "", "NEEDS_REVIEW"]
+    check_line = format_review_checks_notify_summary(summary=checks_summary)
+    if check_line:
+        lines.extend(["", check_line])
     if answer:
         lines.extend(["", "answer:", answer])
     if llm_error:
@@ -603,6 +608,7 @@ async def _process_one_needs_review(session: AsyncSession, bot: Bot) -> bool:
         pr_url = job.get("pr_url") if isinstance(job.get("pr_url"), str) and job.get("pr_url").strip() else None
         pr_error = job.get("error") if isinstance(job.get("error"), str) and job.get("error").strip() else None
 
+    checks_summary = await repo.get_latest_review_checks_summary(task_id=task_id)
     answer_raw = answer
     answer_for_msg = _pretty_json_no_prune(answer_raw) if isinstance(answer_raw, str) else answer_raw
     msg = _format_needs_review_message(
@@ -611,6 +617,7 @@ async def _process_one_needs_review(session: AsyncSession, bot: Bot) -> bool:
         llm_error=llm_error,
         pr_url=pr_url,
         pr_error=pr_error,
+        checks_summary=checks_summary,
     )
     document = None
     if isinstance(answer_raw, str) and len(msg or "") > _tg_text_max_chars():
@@ -623,6 +630,7 @@ async def _process_one_needs_review(session: AsyncSession, bot: Bot) -> bool:
             llm_error=llm_error,
             pr_url=pr_url,
             pr_error=pr_error,
+            checks_summary=checks_summary,
         )
     await _send_with_tg_delivery_trace(
         session,
