@@ -65,6 +65,14 @@
 - Изучить: можно ли разделить "reminder delivery" и "core notification" воркеры (сейчас общий `reminder-worker`, цикл 5 сек, опрашивает due-reminders + 6 типов core-уведомлений).
 - Добавить в `OPS.md` процедуру "cold-start reminders-bot" (когда сервис лежит и надо понять, сетевая это проблема или код).
 
+## Backlog from agent-harness research delta (2026-06-02)
+
+Источник: `/root/server-docs/docs/agent_research_delta_2026-06-02.md`. Сравнение с OpenCode / Aider / Continue / Claude Code / OpenClaw. Большинство items реализуется в `core-orchestrator`, тут — только то, что касается UI/UX reminder-bot.
+
+- **B-permission-modes UX** `[M]` — UI для выбора permission mode при `/run` (`default` / `plan` / `bypassPermissions` / `auto` по Claude Code). Сейчас все task'и идут через `/run` confirmation. Требует: изменение в `/core` flow + display в `/task`.
+- **B-markdown-checks UX** `[M]` — UI для отображения review check results в Telegram (Pass/Fail + link на diff, на манер Continue status checks). Требует: machine review_loop extension в core, форматирование вывода здесь.
+- **B-skills registration** `[S]` — UI для регистрации user-defined skills (сейчас не формализовано; OpenClaw показывает clean pattern `skills/<name>/SKILL.md`). Загрузка через `/add_skill <path>`.
+
 ## Следующий практический шаг
 
 1. **Починить `reminder-bot.service` (сетевые таймауты к Telegram API)** — пока не работает, входящие команды не доставляются. Скорее всего конфиг `proxy`/`MTProxy` или firewall; сначала диагностика, потом фикс. Без этого `/core`, `/fridge*`, `/meal` фактически мертвы для пользователя.
