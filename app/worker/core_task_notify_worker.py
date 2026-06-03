@@ -325,6 +325,7 @@ def _format_needs_review_message(
     llm_error: str | None,
     pr_url: str | None,
     pr_error: str | None,
+    review_checks_summary: dict | None = None,
 ) -> str:
     from app.utils.human_review_display import format_needs_review_cta
 
@@ -337,6 +338,15 @@ def _format_needs_review_message(
         lines.extend(["", "pr_url:", pr_url, "", "pr_error:", pr_error])
     elif pr_url:
         lines.extend(["", "pr_url:", pr_url])
+    # --- B-markdown-checks: compact summary in notify (PR4) ---
+    if isinstance(review_checks_summary, dict) and review_checks_summary:
+        from app.utils.review_checks_display import (
+            format_review_checks_notify_summary as _rc_notify_fmt,
+        )
+        rc_notify = _rc_notify_fmt(summary=review_checks_summary)
+        if rc_notify:
+            lines.extend(["", rc_notify])
+    # --- end B-markdown-checks ---
     lines.extend(["", format_needs_review_cta(task_id=task_id, pr_url=pr_url)])
     return "\n".join(lines).strip()
 
@@ -605,12 +615,19 @@ async def _process_one_needs_review(session: AsyncSession, bot: Bot) -> bool:
 
     answer_raw = answer
     answer_for_msg = _pretty_json_no_prune(answer_raw) if isinstance(answer_raw, str) else answer_raw
+    rc_summary_for_msg = await repo.get_latest_review_checks_summary(task_id=task_id)
+    rc_summary_content = (
+        rc_summary_for_msg["content"]
+        if isinstance(rc_summary_for_msg, dict) and isinstance(rc_summary_for_msg.get("content"), dict)
+        else None
+    )
     msg = _format_needs_review_message(
         task_id=task_id,
         answer=answer_for_msg,
         llm_error=llm_error,
         pr_url=pr_url,
         pr_error=pr_error,
+        review_checks_summary=rc_summary_content,
     )
     document = None
     if isinstance(answer_raw, str) and len(msg or "") > _tg_text_max_chars():
@@ -623,6 +640,7 @@ async def _process_one_needs_review(session: AsyncSession, bot: Bot) -> bool:
             llm_error=llm_error,
             pr_url=pr_url,
             pr_error=pr_error,
+            review_checks_summary=rc_summary_content,
         )
     await _send_with_tg_delivery_trace(
         session,

@@ -266,6 +266,62 @@ class CoreTasksRepository:
             )
         return rows
 
+    # ---- B-markdown-checks: review checks audit (PR4) ----
+    async def get_latest_review_checks_summary(self, *, task_id: int) -> dict | None:
+        """Return the most recent `task_details(kind=review_checks_summary)` row.
+
+        Returns None if no summary exists (backward compat with pre-PR3
+        tasks that never had a check phase). The returned dict has
+        `detail_id` and `content` keys.
+        """
+        res = await self._session.execute(
+            sa.text(
+                "SELECT id, content "
+                "FROM task_details "
+                "WHERE task_id = :task_id AND kind = 'review_checks_summary' "
+                "ORDER BY id DESC "
+                "LIMIT 1"
+            ),
+            {"task_id": int(task_id)},
+        )
+        row = res.mappings().first()
+        if row is None:
+            return None
+        content = row.get("content")
+        return {
+            "detail_id": int(row["id"]),
+            "content": dict(content) if isinstance(content, dict) else {},
+        }
+
+    async def get_review_check_results_for_iter(
+        self, *, task_id: int, review_iter: int
+    ) -> list[dict]:
+        """Return `task_details(kind=review_check_result)` rows for one iter.
+
+        Ordered by id ASC. The returned dicts include `detail_id` and
+        a flattened view of `content` plus the original `content` key
+        so callers can pick either form.
+        """
+        res = await self._session.execute(
+            sa.text(
+                "SELECT id, content "
+                "FROM task_details "
+                "WHERE task_id = :task_id "
+                "AND kind = 'review_check_result' "
+                "AND (content->>'review_iter')::int = :review_iter "
+                "ORDER BY id ASC"
+            ),
+            {"task_id": int(task_id), "review_iter": int(review_iter)},
+        )
+        out: list[dict] = []
+        for row in res.mappings().all():
+            content = row.get("content")
+            if not isinstance(content, dict):
+                continue
+            out.append({"detail_id": int(row["id"]), **content, "content": dict(content)})
+        return out
+    # ---- end B-markdown-checks ----
+
     async def pop_one_task_for_waiting_user_notify(self) -> dict | None:
         res = await self._session.execute(
             sa.text(
