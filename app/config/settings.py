@@ -32,6 +32,13 @@ class Settings:
     worker_poll_seconds: int = int(os.getenv("WORKER_POLL_SECONDS", "5"))
     tg_delivery_max_attempts: int = int(os.getenv("TG_DELIVERY_MAX_ATTEMPTS", "10"))
     tg_delivery_max_retry_window_seconds: int = int(os.getenv("TG_DELIVERY_MAX_RETRY_WINDOW_SECONDS", "86400"))
+    tg_delivery_enabled: bool = os.getenv("TG_DELIVERY_ENABLED", "1").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    }
 
     # Jira integration
     jira_base_url: str = os.getenv("JIRA_BASE_URL", "https://legalbet.atlassian.net")
