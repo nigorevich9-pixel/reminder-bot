@@ -16,6 +16,7 @@ Code config entrypoint: `app/config/settings.py` (frozen `dataclass Settings`, �
 | `WORKER_POLL_SECONDS` | `5` | `app/worker/runner.py:run_loop` | Интервал опроса due-reminders и core-уведомлений |
 | `TG_DELIVERY_MAX_ATTEMPTS` | `10` | `app/worker/core_task_notify_worker.py` | Макс. попыток доставки уведомления в TG перед тем как сдаться |
 | `TG_DELIVERY_MAX_RETRY_WINDOW_SECONDS` | `86400` (24h) | `app/worker/core_task_notify_worker.py` | Окно (сек), в течение которого делаются retry уведомлений |
+| `TG_DELIVERY_ENABLED` | `1` (true) | `app/worker/runner.py` | `0`/`false` — не слать core task notify в TG (due-reminders по-прежнему идут). На VDS при блокировке `api.telegram.org` ставить `false` |
 
 ## Ops alerting
 
