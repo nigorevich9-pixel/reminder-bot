@@ -17,6 +17,9 @@ todos:
 isProject: false
 ---
 
+> **Audit 2026-08-21:** implemented in code/docs. YAML todos in this file may still say pending (stale). Archived to `plans/completed/`.
+
+
 ## Goal
 
 Enable Telegram notifications for `task_details.kind='codegen_result'` by wiring the already-implemented handler into `reminder-worker`’s main loop.

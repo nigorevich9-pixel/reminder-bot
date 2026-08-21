@@ -24,6 +24,9 @@ source_plan_path: /root/.cursor/plans/reminder-bot_core_ux_a7040fb5.plan.md
 source_mtime: 2026-02-04T10:59:46Z
 ---
 
+> **Audit 2026-08-21:** implemented in code/docs. YAML todos in this file may still say pending (stale). Archived to `plans/completed/`.
+
+
 ## Что меняем
 
 - В `reminder-bot` после создания `user_request` события бот должен **фоном дождаться** создания `tasks` и прислать отдельное сообщение с **task_id**.
