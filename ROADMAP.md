@@ -1,6 +1,6 @@
 # reminder-bot — Roadmap / Backlog
 
-> Last reviewed: 2026-06-01.
+> Last reviewed: 2026-08-21.
 > Этот файл — **проектный** roadmap для `reminder-bot`: что осталось доделать, что в работе, идеи и риски.
 > Каноничный **system-level** roadmap (порядок релизов по всей экосистеме) живёт в `/root/server-docs/docs/roadmap.md`.
 > Где искать остальное:

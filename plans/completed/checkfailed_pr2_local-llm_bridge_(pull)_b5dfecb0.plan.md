@@ -27,6 +27,9 @@ source_plan_path: /root/.cursor/plans/local-llm_bridge_(pull)_b5dfecb0.plan.md
 source_mtime: 2026-02-01T09:57:11Z
 ---
 
+> **Audit 2026-08-21:** implemented in code/docs. YAML todos in this file may still say pending (stale). Archived to `plans/completed/`.
+
+
 ## Цель
 
 - Задание лежит на сервере в `[/root/reminder-bot/task.txt](/root/reminder-bot/task.txt)` (сейчас: `1. 2+2`).

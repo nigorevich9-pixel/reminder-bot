@@ -1,10 +1,12 @@
 # Reminder Service — Status
 
-> Last reviewed: 2026-06-01.
+> Last reviewed: 2026-08-21.
 > Документ описывает **текущее** состояние проекта на VDS (systemd, актуальный код, поведение воркеров). Канонический обзор — в `PROJECT.md`, канонические сценарии — в `/root/core-orchestrator/SCENARIOS.md`.
 > Полный roadmap / backlog / known issues собраны в `ROADMAP.md` (см. также `/root/server-docs/docs/roadmap.md` для system-level).
 
 ## Текущее состояние (snapshot)
+
+- **Plans audit (2026-08-21):** `plans/*.plan.md` archived to `plans/completed/` (`/fridge_update`, diet scenario, Patch D UI, codegen TG notify). No open plan files. Remaining UX items stay in this roadmap / `ROADMAP.md`.
 
 ### Сервисы (systemd, VDS)
 
