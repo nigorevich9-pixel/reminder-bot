@@ -384,6 +384,50 @@ def _format_failed_message(*, task_id: int, title: str, error: str | None) -> st
     return "\n".join([l for l in lines if l is not None]).strip()
 
 
+def _blocked_is_resource_pressure(block: dict | None) -> bool:
+    if not isinstance(block, dict):
+        return False
+    if str(block.get("block_reason") or "") == "llm_resource_pressure":
+        return True
+    detail = str(block.get("detail") or "").strip()
+    return detail in {"insufficient_available_ram", "insufficient_available_vram"}
+
+
+def _format_blocked_message(*, task_id: int, title: str, block: dict | None) -> str:
+    role = None
+    if isinstance(block, dict):
+        raw_role = block.get("role")
+        if isinstance(raw_role, str) and raw_role.strip():
+            role = raw_role.strip()
+    role_label = role or "текущей"
+    lines = [f"task #{task_id}"]
+    title_s = (title or "").strip()
+    if title_s:
+        lines.append(title_s)
+    lines.extend(["", f"Нет доступной локальной модели для роли {role_label}."])
+    if _blocked_is_resource_pressure(block):
+        lines.extend(
+            [
+                "",
+                "Причина: недостаточно доступной памяти.",
+                "",
+                "После освобождения ресурсов повтори:",
+                f"/run {task_id}",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "",
+                "Ни одна модель из локальной policy не установлена или не соответствует требованиям.",
+                "",
+                f"Повтор: /run {task_id}",
+            ]
+        )
+    lines.extend(["", f"Details: /task {task_id}"])
+    return "\n".join([l for l in lines if l is not None]).strip()
+
+
 def _format_stopped_message(*, task_id: int, title: str) -> str:
     return "\n".join([f"task #{task_id}", f"{title}".strip(), "", "STOPPED_BY_USER"]).strip()
 
@@ -1026,6 +1070,35 @@ async def _process_one_failed(session: AsyncSession, bot: Bot) -> bool:
     return True
 
 
+async def _process_one_blocked(session: AsyncSession, bot: Bot) -> bool:
+    repo = CoreTasksRepository(session)
+    task = await repo.pop_one_task_for_blocked_notify()
+    if not task:
+        return False
+
+    task_id = int(task["id"])
+    transition_id = task.get("transition_id")
+    transition_id = int(transition_id) if isinstance(transition_id, int) else None
+
+    raw_input = await repo.get_raw_input(task_id=task_id)
+    block = await repo.get_latest_block_reason(task_id=task_id)
+    chat_id = _extract_chat_id(raw_input or {})
+
+    msg = _format_blocked_message(task_id=task_id, title=str(task.get("title") or ""), block=block)
+    await _send_with_tg_delivery_trace(
+        session,
+        bot,
+        task_id=task_id,
+        chat_id=chat_id,
+        text=msg,
+        message_kind="blocked",
+        to_status=str(task.get("status") or ""),
+        transition_id=transition_id,
+    )
+    await session.commit()
+    return True
+
+
 async def _process_one_stopped(session: AsyncSession, bot: Bot) -> bool:
     repo = CoreTasksRepository(session)
     task = await repo.pop_one_task_for_stopped_notify()
@@ -1098,6 +1171,15 @@ async def process_core_failed_notifications(session: AsyncSession, bot: Bot, *, 
     return processed
 
 
+async def process_core_blocked_notifications(session: AsyncSession, bot: Bot, *, limit: int = 10) -> int:
+    processed = 0
+    for _ in range(max(int(limit), 1)):
+        if not await _process_one_blocked(session, bot):
+            break
+        processed += 1
+    return processed
+
+
 async def process_core_stopped_notifications(session: AsyncSession, bot: Bot, *, limit: int = 10) -> int:
     processed = 0
     for _ in range(max(int(limit), 1)):
@@ -1135,6 +1217,10 @@ async def run_loop() -> None:
                 failed_processed = await process_core_failed_notifications(session, bot, limit=10)
                 if failed_processed:
                     logger.info("Sent %s core failed notifications", failed_processed)
+
+                blocked_processed = await process_core_blocked_notifications(session, bot, limit=10)
+                if blocked_processed:
+                    logger.info("Sent %s core blocked notifications", blocked_processed)
 
                 stopped_processed = await process_core_stopped_notifications(session, bot, limit=10)
                 if stopped_processed:
