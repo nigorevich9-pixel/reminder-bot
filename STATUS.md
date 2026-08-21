@@ -8,7 +8,7 @@
 
 ### Сервисы (systemd, VDS)
 
-- `reminder-worker.service` — **active (running)**. Цикл `run_loop` (см. `app/worker/runner.py`) опрашивает due-reminders и 6 типов core-уведомлений каждые `WORKER_POLL_SECONDS` (дефолт 5 сек).
+- `reminder-worker.service` — **active (running)**. Цикл `run_loop` опрашивает due-reminders и core-уведомления (включая BLOCKED) каждые `WORKER_POLL_SECONDS` (дефолт 5 сек).
 - `reminder-bot.service` — на 2026-06-01 в авто-рестарте, exit-code=1. Причина в `journalctl`: `aiogram.exceptions.TelegramNetworkError: Request timeout error` при `bot.get_me()` (не код, а сетевая проблема к `api.telegram.org`). Бот недоступен, но воркер уведомлений работает.
 - `jira-worker.service` — на 2026-06-01 в авто-рестарте, exit-code=0. Jira-интеграция **deprecated** (см. `PROJECT.md`), отказ ожидаем.
 
@@ -34,6 +34,7 @@
 - `reminder-worker` также доставляет уведомления по core-задачам (delivery trace в `task_details(kind=tg_delivery)` с retry/backoff):
   - `DONE` → финальный итог пользователю (вопрос+ответ / отчёт) (delivery не меняет `tasks.status`)
   - `FAILED` → ошибка пользователю (delivery не меняет `tasks.status`)
+  - `BLOCKED` → нет доступной локальной модели (role/reason из `block_reason`); CTA `/run`
   - `WAITING_USER` → уточняющий вопрос пользователю
   - `NEEDS_REVIEW` → "нужен человек" (для question и task)
   - `STOPPED_BY_USER` → уведомление об остановке

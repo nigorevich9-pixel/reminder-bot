@@ -11,6 +11,7 @@ from sqlalchemy.pool import NullPool
 from app.config.settings import settings
 from app.repositories.core_tasks_repository import CoreTasksRepository
 from app.worker.core_task_notify_worker import (
+    process_core_blocked_notifications,
     process_core_codegen_notifications,
     process_core_done_notifications,
     process_core_failed_notifications,
@@ -1637,6 +1638,157 @@ class TestCoreEventsAndNotifyWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(bot.sent), 1)
         self.assertEqual(bot.sent[0][0], 99993)
         self.assertIn("FAILED", bot.sent[0][1])
+
+    async def test_blocked_is_notified_and_does_not_change_status(self) -> None:
+        bot = _StubBot()
+
+        async with _session() as session:
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO users (tg_id, username, first_name) "
+                    "VALUES (:tg_id, NULL, NULL) "
+                    "ON CONFLICT (tg_id) DO UPDATE SET tg_id = EXCLUDED.tg_id "
+                    "RETURNING id"
+                ),
+                {"tg_id": 9107},
+            )
+            user_id = int(res.scalar_one())
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO tasks (created_by_user_id, project_id, source, external_key, title, status) "
+                    "VALUES (:uid, NULL, 'telegram', NULL, 'q_blocked', 'BLOCKED') "
+                    "RETURNING id"
+                ),
+                {"uid": user_id},
+            )
+            task_id = int(res.scalar_one())
+            await session.execute(
+                sa.text(
+                    "INSERT INTO task_transitions (task_id, from_status, to_status, actor_user_id, reason) "
+                    "VALUES (:tid, 'RUNNING', 'BLOCKED', NULL, 'test')"
+                ),
+                {"tid": task_id},
+            )
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'raw_input', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {"kind": "task", "text": "Edit", "tg": {"chat_id": 99991, "tg_id": 9107}, "event_id": 1},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'block_reason', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {"block_reason": "no_capable_worker", "role": "codegen", "retryable": False},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.commit()
+
+        async with _session() as session:
+            n1 = await process_core_blocked_notifications(session, bot, limit=5)
+            await session.commit()
+            self.assertEqual(n1, 1)
+            res = await session.execute(sa.text("SELECT status FROM tasks WHERE id = :id"), {"id": task_id})
+            self.assertEqual(res.scalar_one(), "BLOCKED")
+
+        self.assertEqual(len(bot.sent), 1)
+        self.assertEqual(bot.sent[0][0], 99991)
+        self.assertIn("Нет доступной локальной модели для роли codegen", bot.sent[0][1])
+        self.assertIn("Ни одна модель из локальной policy", bot.sent[0][1])
+        self.assertIn(f"/run {task_id}", bot.sent[0][1])
+
+        async with _session() as session:
+            n2 = await process_core_blocked_notifications(session, bot, limit=5)
+            await session.commit()
+            self.assertEqual(n2, 0)
+            res = await session.execute(
+                sa.text(
+                    "SELECT COUNT(1) FROM task_details "
+                    "WHERE task_id = :id AND kind = 'tg_delivery' "
+                    "AND content->>'message_kind' = 'blocked'"
+                ),
+                {"id": task_id},
+            )
+            self.assertEqual(int(res.scalar_one()), 1)
+
+    async def test_blocked_resource_pressure_message_uses_detail(self) -> None:
+        bot = _StubBot()
+        async with _session() as session:
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO users (tg_id, username, first_name) "
+                    "VALUES (:tg_id, NULL, NULL) "
+                    "ON CONFLICT (tg_id) DO UPDATE SET tg_id = EXCLUDED.tg_id "
+                    "RETURNING id"
+                ),
+                {"tg_id": 9108},
+            )
+            user_id = int(res.scalar_one())
+            res = await session.execute(
+                sa.text(
+                    "INSERT INTO tasks (created_by_user_id, project_id, source, external_key, title, status) "
+                    "VALUES (:uid, NULL, 'telegram', NULL, 'q_blocked_ram', 'BLOCKED') "
+                    "RETURNING id"
+                ),
+                {"uid": user_id},
+            )
+            task_id = int(res.scalar_one())
+            await session.execute(
+                sa.text(
+                    "INSERT INTO task_transitions (task_id, from_status, to_status, actor_user_id, reason) "
+                    "VALUES (:tid, 'RUNNING', 'BLOCKED', NULL, 'test')"
+                ),
+                {"tid": task_id},
+            )
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'raw_input', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {"kind": "task", "text": "Edit", "tg": {"chat_id": 99990, "tg_id": 9108}, "event_id": 1},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.execute(
+                sa.text("INSERT INTO task_details (task_id, kind, content) VALUES (:tid, 'block_reason', CAST(:c AS jsonb))"),
+                {
+                    "tid": task_id,
+                    "c": json.dumps(
+                        {
+                            "block_reason": "llm_resource_pressure",
+                            "role": "planner",
+                            "reason": "no_capable_model",
+                            "detail": "insufficient_available_ram",
+                            "llm_request_id": 42,
+                            "retryable": True,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            )
+            await session.commit()
+
+        async with _session() as session:
+            n1 = await process_core_blocked_notifications(session, bot, limit=5)
+            await session.commit()
+            self.assertEqual(n1, 1)
+
+        self.assertEqual(len(bot.sent), 1)
+        self.assertIn("роли planner", bot.sent[0][1])
+        self.assertIn("недостаточно доступной памяти", bot.sent[0][1])
+        self.assertIn(f"/run {task_id}", bot.sent[0][1])
 
     async def test_stopped_is_notified_and_does_not_change_status(self) -> None:
         bot = _StubBot()

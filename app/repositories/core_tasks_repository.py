@@ -204,6 +204,19 @@ class CoreTasksRepository:
         row = res.mappings().first()
         return dict(row["content"]) if row and isinstance(row.get("content"), dict) else None
 
+    async def get_latest_block_reason(self, *, task_id: int) -> dict | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT content "
+                "FROM task_details "
+                "WHERE task_id = :task_id AND kind = 'block_reason' "
+                "ORDER BY id DESC LIMIT 1"
+            ),
+            {"task_id": task_id},
+        )
+        row = res.mappings().first()
+        return dict(row["content"]) if row and isinstance(row.get("content"), dict) else None
+
     async def get_latest_waiting_user_reason(self, *, task_id: int) -> dict | None:
         res = await self._session.execute(
             sa.text(
@@ -652,6 +665,63 @@ class CoreTasksRepository:
                 "    SELECT 1 FROM codegen_jobs cj "
                 "    WHERE cj.task_id = t.id AND COALESCE(cj.error,'') <> ''"
                 "  )"
+                ") "
+                "AND ("
+                "  del.status IS NULL "
+                "  OR (del.status = 'failed' AND del.retryable IS TRUE AND (del.next_attempt_at IS NULL OR del.next_attempt_at <= now()))"
+                ") "
+                "ORDER BY tr.transition_id ASC "
+                "LIMIT 1 "
+                "FOR UPDATE OF t SKIP LOCKED"
+            )
+        )
+        row = res.mappings().first()
+        return dict(row) if row else None
+
+    async def pop_one_task_for_blocked_notify(self) -> dict | None:
+        res = await self._session.execute(
+            sa.text(
+                "SELECT t.id, t.title, t.status, t.created_at, t.updated_at, tr.transition_id, "
+                "  del.status AS delivery_status, del.attempt_no AS delivery_attempt_no, del.next_attempt_at AS delivery_next_attempt_at "
+                "FROM tasks t "
+                "JOIN LATERAL ("
+                "  SELECT id AS transition_id "
+                "  FROM task_transitions "
+                "  WHERE task_id = t.id AND to_status = 'BLOCKED' "
+                "    AND NOT EXISTS ("
+                "      SELECT 1 FROM task_details d "
+                "      WHERE d.task_id = t.id AND d.kind = 'tg_delivery' "
+                "        AND d.content->>'channel' = 'tg' "
+                "        AND d.content->>'message_kind' = 'blocked' "
+                "        AND d.content->>'message_version' = '1' "
+                "        AND CAST(d.content->>'transition_id' AS int) = task_transitions.id "
+                "        AND d.content->>'status' = 'sent'"
+                "    ) "
+                "  ORDER BY id ASC "
+                "  LIMIT 1"
+                ") tr ON true "
+                "LEFT JOIN LATERAL ("
+                "  SELECT "
+                "    d.content->>'status' AS status, "
+                "    NULLIF(d.content->>'attempt_no','')::int AS attempt_no, "
+                "    NULLIF(d.content->>'retryable','')::boolean AS retryable, "
+                "    NULLIF(d.content->>'next_attempt_at','')::timestamptz AS next_attempt_at "
+                "  FROM task_details d "
+                "  WHERE d.task_id = t.id AND d.kind = 'tg_delivery' "
+                "    AND d.content->>'channel' = 'tg' "
+                "    AND d.content->>'message_kind' = 'blocked' "
+                "    AND d.content->>'message_version' = '1' "
+                "    AND CAST(d.content->>'transition_id' AS int) = tr.transition_id "
+                "  ORDER BY d.id DESC LIMIT 1"
+                ") del ON true "
+                "WHERE t.status = 'BLOCKED' "
+                "AND EXISTS ("
+                "  SELECT 1 FROM task_details d "
+                "  WHERE d.task_id = t.id AND d.kind = 'raw_input'"
+                ") "
+                "AND EXISTS ("
+                "  SELECT 1 FROM task_details d "
+                "  WHERE d.task_id = t.id AND d.kind = 'block_reason'"
                 ") "
                 "AND ("
                 "  del.status IS NULL "

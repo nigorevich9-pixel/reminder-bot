@@ -9,6 +9,7 @@ from app.config.settings import settings
 from app.db import AsyncSessionLocal
 from app.repositories.reminder_repository import ReminderRepository
 from app.worker.core_task_notify_worker import (
+    process_core_blocked_notifications,
     process_core_codegen_notifications,
     process_core_done_notifications,
     process_core_failed_notifications,
@@ -85,6 +86,9 @@ async def run_loop() -> None:
                     failed_notified = await process_core_failed_notifications(session, bot, limit=20)
                     if failed_notified:
                         logger.info("Sent %s core failed notifications", failed_notified)
+                    blocked_notified = await process_core_blocked_notifications(session, bot, limit=20)
+                    if blocked_notified:
+                        logger.info("Sent %s core blocked notifications", blocked_notified)
                     stopped_notified = await process_core_stopped_notifications(session, bot, limit=20)
                     if stopped_notified:
                         logger.info("Sent %s core stopped notifications", stopped_notified)
