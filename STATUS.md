@@ -1,8 +1,10 @@
 # Reminder Service — Status
 
-> Last reviewed: 2026-08-21.
+> Last reviewed: 2026-08-22.
 > Документ описывает **текущее** состояние проекта на VDS (systemd, актуальный код, поведение воркеров). Канонический обзор — в `PROJECT.md`, канонические сценарии — в `/root/core-orchestrator/SCENARIOS.md`.
 > Полный roadmap / backlog / known issues собраны в `ROADMAP.md` (см. также `/root/server-docs/docs/roadmap.md` для system-level).
+>
+> **Next practical step:** починить `reminder-bot.service` (TG timeouts) — иначе нет Telegram-ветки core P0. Затем help `/hold`. UX (unified request и т.д.) — Later.
 
 ## Текущее состояние (snapshot)
 
