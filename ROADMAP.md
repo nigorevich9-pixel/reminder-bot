@@ -1,80 +1,102 @@
 # reminder-bot — Roadmap / Backlog
 
-> Last reviewed: 2026-08-21.
-> Этот файл — **проектный** roadmap для `reminder-bot`: что осталось доделать, что в работе, идеи и риски.
-> Каноничный **system-level** roadmap (порядок релизов по всей экосистеме) живёт в `/root/server-docs/docs/roadmap.md`.
-> Где искать остальное:
-> - "Как работает сейчас": `/root/reminder-bot/STATUS.md` (канонический статус)
-> - Сценарии и user-facing команды: `/root/reminder-bot/PROJECT.md`
-> - Ops / runbook: `/root/reminder-bot/OPS.md`
-> - Env-карта: `/root/reminder-bot/CONFIG.md`
-> - Security baseline: `/root/reminder-bot/SECURITY.md`
-> - Тесты: `/root/reminder-bot/TESTS.md`
+> Last reviewed: 2026-09-19 (docs / cross-repo alignment — **not** a live systemd re-probe).
+> Telegram UI + reminders + fridge. **Очередь экосистемы:** [server-docs/docs/roadmap.md](https://github.com/nigorevich9-pixel/server-docs/blob/main/docs/roadmap.md).
+> Harness / docs/core: [core-orchestrator/ROADMAP.md](https://github.com/nigorevich9-pixel/core-orchestrator/blob/main/ROADMAP.md). Снимок: [`STATUS.md`](STATUS.md). Сценарии команд: [`PROJECT.md`](PROJECT.md).
 
-## Известные баги / риски (Known issues)
+Этот репо **не** владеет codegen loop и **не** является prerequisite для harness **P0** replace E2E. Живой Telegram-бот — блокер только для **Telegram / end-user E2E**. Core P0 replace E2E идёт через Core Control / direct events. Остальной UX — Later относительно native core path.
 
-Источник: `STATUS.md` (раздел "Known issues").
+---
 
-- Help-текст `/hold` в `/start` вводит в заблуждение: написано «приостановить (пока логируем)», а в core это **терминальная** остановка (`STOPPED_BY_USER`) с отменой очереди/кодогена (см. `/root/core-orchestrator/EVENTS.md`).
-- Схема `events` создаётся "если не существует" — на некоторых окружениях это может конфликтовать с ручными изменениями схемы.
-- Нотификатор должен быть устойчивым к отсутствию `chat_id` в `raw_input` (сейчас best-effort).
-- **`reminder-bot.service` сейчас не работает** (сетевые таймауты к Telegram API на 2026-06-01). Пока не восстановлено — входящие команды `/core`, `/fridge*`, `/meal` и т.п. не доставляются. Воркер уведомлений (`reminder-worker`) не зависит от бота и продолжает работать.
+## Карта фич (этот репо)
 
-## Осталось сделать (общие) — Next steps
+| ID | Фича | Приоритет | Статус | Что решает |
+|---|---|---|---|---|
+| WRK | `reminder-worker` (reminders + core notify) | — | prod-used | DONE/FAILED/NEEDS_REVIEW/codegen_result в TG |
+| D | Patch D: план в `/task` | — | код | Человек видит work items |
+| E | Patch E CTA `/run` `/ask` | — | код | Human gate |
+| FR | Fridge/meal команды | — | код | Бытовой трек, не harness |
+| CHK | Display markdown-check results из `task_details` | cheap UI consumer (не ждать весь core P1.3) | **код** | Читает `review_checks_summary` / `review_check_result`; секция пустая, если контракта/данных нет |
+| **BOT** | `reminder-bot.service` жив | **Ops / блокер только Telegram E2E** (не core P0) | last verified down **2026-06-01**; **current live state needs ops recheck** | `/core` с телефона |
+| HOLD | Help `/hold` = «остановить окончательно» | Ops **[S]** safety bug | баг в help | Сейчас hold = terminal `STOPPED_BY_USER`, не pause |
+| INBOX | Thin HITL: Working / Needs Action / Done-Unread | Later | нет | Core [#106](https://github.com/nigorevich9-pixel/core-orchestrator/issues/106) operator inbox projection **merged**; Telegram — тонкая поверхность (status, CTA, summaries, links). [task-tracker-web](https://github.com/nigorevich9-pixel/task-tracker-web) endpoint — отдельный in-progress slice. Не интеграция Pizza/Orca/Polide. |
+| UNIF | Unified request (без Вопрос/Задача) | Later | нет | Нужен planner в **core** |
+| REPO | Выбор репо в `/core` (Telegram picker) | Later (UI) | нет | Core Control web уже принимает явный `repo_id`; Telegram picker **не** реализован |
+| PAUS | Pause vs stop | Later | нет | Сейчас hold = terminal |
+| ASK | Следующее сообщение = ответ на `/ask` | Later | нет | UX WAITING_USER |
+| APPR | Отдельная команда approve | Later | нет | Сейчас роль `/run` |
+| LST | Список задач / фильтры | Later | нет | Удобство |
+| TZ | Персистентные таймзоны | Later | нет | Если понадобится |
+| FR2 | Fridge edit/delete, list by expiry | Later (продукт) | нет | Не P0 |
+| PMUX | Permission-modes UX | после core Later PMOD | нет | UI не опережает сервер |
+| SKL | `/add_skill` | после core P2.2 | нет | Сначала SKILL.md в core |
 
-Источник: `STATUS.md` (раздел "Осталось сделать (общие)") + `PROJECT.md` (раздел "Planned", "Что есть / чего не хватает").
+Jira — **deprecated**, не в очереди.
 
-### UI/UX
+---
 
-- Персистентные таймзоны пользователей (если понадобится).
-- Доп. очистка/архивирование старых уведомлений.
-- Режим "просмотр задач" (list, filters) для удобства пользователя.
-- Rate-limit/anti-spam на создание задач.
+## Порядок (этот репо vs docs/core)
 
-### `/core` flow (вопросы/задачи через core)
+Системный порядок (**docs/core**): **P0** → **P0.1** parallel transport → **P0.2** baseline → **P0.3** decision gates → remaining native **P1**.
 
-- Выбор репозитория в `/core`: показывать доступные репо (ACL через `project_members`), использовать `repo_id` в `tool_request` для `repo.*` инструментов (а `project_id` остаётся опциональной подсказкой/маппингом для codegen).
-- Unified request в `/core`: убрать split "Вопрос/Задача" в UI; отправлять один "request", классификацию/маршрут определяет `core-orchestrator` planner/policy. **Owner:** reminder-bot (UI) + core-orchestrator (planner).
-- Priority / criticality: UX для выставления/отображения важности запроса (или хотя бы отображение policy core в `/task`).
-- UX: разделить pause vs stop для `/hold` (pause+resume и отдельный stop/cancel), см. `/root/server-docs/docs/roadmap.md` Improvements backlog #3.
-- UX: когда задача в `WAITING_USER` и бот просит ответить командой вида `/ask <task_id> <text>`, следующее сообщение пользователя автоматически трактовать как ответ для `/ask <task_id>` (без ввода `/ask <task_id>`).
-- Явная команда "approve" (сейчас её роль выполняет `/run`).
+```text
+Ops [S]: help /hold = «остановить окончательно»
+Ops: recheck / restore reminder-bot.service
+        ← блокер только Telegram / end-user E2E
+        ← не prerequisite для core P0 replace E2E
+        │
+        ▼
+docs/core: P0 → P0.1 parallel transport → P0.2 baseline
+           → P0.3 decision gates → remaining native P1
+  (replace E2E already via Core Control / direct events)
+        │
+        ▼
+Later UX: thin HITL (Working / Needs Action / Done-Unread),
+          unified request, Telegram repo picker, pause/resume
+Later продукт: fridge edit/delete
+```
 
-### Fridge / Meal
+Не делать permission-modes / skills UI «вперёд» сервера. Не строить в Telegram IDE / task-board (богатый desktop UX — не здесь).
 
-- Fridge-домен не имеет выделенного UX для редактирования/удаления (только add/remove/inventory/update). Добавить edit/delete (через `/fridge_edit`, `/fridge_delete`) и явный "list by expiry".
+### Ops — бот должен отвечать (Telegram E2E)
 
-### Codegen / Review
+**Решает:** входящие `/core`, `/fridge*`, `/meal`. Воркер уведомлений от этого не зависит.
 
-- Уведомления о `codegen_result` уже включены в `reminder-worker` (через `process_core_codegen_notifications()`) — отметка, что закрыто.
-- Привязка задач к репозиторию в `tool_request` — см. core `STATUS.md` Missing.
+Last verified down **2026-06-01** (`TelegramNetworkError` / timeouts к `api.telegram.org`). **Current live state needs ops recheck** — этот docs-review не зондировал systemd.
 
-## Out of scope (напоминание для контекста)
+Пока бот недоступен, **core P0 replace E2E уже можно и нужно гонять минуя Telegram** (Core Control / direct events). Живой бот **не** harness-P0 prerequisite. Заявленный пользовательский Telegram E2E — да, блокер.
 
-Источник: `STATUS.md` (раздел "Текущее состояние (общее)") + `PROJECT.md` (раздел "Jira (deprecated)").
+### Ops [S] — `/hold` (safety bug)
 
-- **Jira-интеграция deprecated**: код, миграции и воркер для Jira (`/jira_*`, `jira-worker`) в репо есть, но в рамках текущего roadmap системы Jira **не используется** и не является частью сквозных сценариев оркестратора. По умолчанию `jira-worker` не запускаем. Команды (`/jira`, `/jira_test`, `/jira_watch`, `/jira_unwatch`, `/jira_list`, `/jira_check`) оставлены в коде, но **не должны появляться в актуальном roadmap**. Если захочется вернуть — вынести в отдельный файл, чтобы не путать с активными планами.
-- Orchestration-задачи (tasks/events/llm_requests/codegen) считаем зоной ответственности `core-orchestrator`; этот проект держим как UI+reminders (+ нотификации).
+В `/start` help сейчас: «приостановить (пока логируем)». В core это **терминальная** остановка `STOPPED_BY_USER` (очередь/кодоген отменяются), не пауза. Пока pause/resume — Later, текст обязан прямо говорить **«остановить окончательно»**.
 
-## Backlog / идеи (не приоритизировано)
+---
 
-Свободный список мыслей, которые пока не стали формальными задачами.
+## Out of scope
 
-- Документировать, какие "delivery-категории" (`DONE/FAILED/WAITING_USER/NEEDS_REVIEW/STOPPED_BY_USER/codegen_result`) сейчас активны и какие best-effort vs hard-retry. Частично в `STATUS.md` ("Текущее состояние (общее)"), но не в одном месте.
-- Расширить `CONFIG.md` секцией "feature flags" (даже если сейчас нет — место под будущее).
-- Изучить: можно ли разделить "reminder delivery" и "core notification" воркеры (сейчас общий `reminder-worker`, цикл 5 сек, опрашивает due-reminders + 6 типов core-уведомлений).
-- Добавить в `OPS.md` процедуру "cold-start reminders-bot" (когда сервис лежит и надо понять, сетевая это проблема или код).
+- Оркестрация tasks/llm/codegen — **core**.
+- Operator inbox projection — core [#106](https://github.com/nigorevich9-pixel/core-orchestrator/issues/106) (merged); HTTP surface — task-tracker-web (отдельный slice).
+- Jira-команды в актуальной очереди не держать.
+- Pizza Bot / Orca / Polide — источники идей для Later UX, **не** заявленные интеграции.
 
-## Backlog from agent-harness research delta (2026-06-02)
+---
 
-Источник: `/root/server-docs/docs/agent_research_delta_2026-06-02.md`. Сравнение с OpenCode / Aider / Continue / Claude Code / OpenClaw. Большинство items реализуется в `core-orchestrator`, тут — только то, что касается UI/UX reminder-bot.
+## Later (не над Ops, не над core P0)
 
-- **B-permission-modes UX** `[M]` — UI для выбора permission mode при `/run` (`default` / `plan` / `bypassPermissions` / `auto` по Claude Code). Сейчас все task'и идут через `/run` confirmation. Требует: изменение в `/core` flow + display в `/task`.
-- **B-markdown-checks UX** `[M]` — UI для отображения review check results в Telegram (Pass/Fail + link на diff, на манер Continue status checks). Требует: machine review_loop extension в core, форматирование вывода здесь.
-- **B-skills registration** `[S]` — UI для регистрации user-defined skills (сейчас не формализовано; OpenClaw показывает clean pattern `skills/<name>/SKILL.md`). Загрузка через `/add_skill <path>`.
+- Pizza-like Action/Unread notification model: три внешних состояния (**Working** / **Needs Action** / **Done-Unread**). Будить человека только если нужен выбор, задача упала без recovery, или есть готовый результат. Внутренние `RUNNING / NEEDS_LLM_REVIEW / PUSHED / …` — в core/task details, в TG только по запросу.
+- Durable approval: checkpoint живёт в core; бот лишь показывает. CTA: approve / reject / (позже) edit proposed action, если тип операции допускает.
+- Тонкая mobile surface: status, Needs Action, краткий diff/result summary, approve/reject, ссылка на PR/preview/logs. Preview/deploy results — surfacing URL + tests/build/deploy status + короткий failure summary, когда sandbox/deploy adapter появится в core.
+- Telegram repo picker (`repo_id`) — UI здесь; явный `repo_id` в Core Control web уже есть и **не** означает, что picker в боте сделан.
+- Delivery-категории в одном месте (частично STATUS).
+- Feature flags в CONFIG.md.
+- Разделить reminder delivery и core notify workers.
+- Cold-start процедура в OPS.md.
+- Rate-limit, архив уведомлений, явный approve.
+
+---
 
 ## Следующий практический шаг
 
-1. **Починить `reminder-bot.service` (сетевые таймауты к Telegram API)** — пока не работает, входящие команды не доставляются. Скорее всего конфиг `proxy`/`MTProxy` или firewall; сначала диагностика, потом фикс. Без этого `/core`, `/fridge*`, `/meal` фактически мертвы для пользователя.
-2. Поправить help-текст `/hold` (или окончательно перейти на split pause/stop) — пользователь может случайно убить задачу.
-3. После починки бота — вернуться к UX-плану (unified request, project selection, priority).
+1. **Ops recheck `reminder-bot.service`** (last verified down 2026-06-01). Если всё ещё down — починить прокси/firewall к `api.telegram.org`. Это нужно для **Telegram / end-user E2E**, не для core P0.
+2. Safety [S]: help-текст `/hold` → «остановить окончательно».
+3. Later UX (thin HITL, unified request, Telegram repo picker) — **после** docs/core P0, не вместо.

@@ -1,0 +1,16 @@
+---
+description: Finish completed work sessions with a pushed commit
+alwaysApply: true
+---
+
+# Finish work with a commit
+
+When a work session makes repository changes and reaches a completed or handoff-ready stopping point:
+
+- Commit all intended changes on the current task branch before the final report.
+- Push the commit so reviewers and automations can observe the new SHA.
+- In the final report, state the pushed commit SHA and the exact checks/tests run.
+- If the session made no repository changes, explicitly report: `no changes / no commit`.
+- Do not leave completed changes only in the working tree.
+- Do not commit unrelated pre-existing user changes.
+- Do not create a replacement/duplicate PR merely to satisfy this rule; continue on the assigned branch/PR unless the task explicitly requires a separate repository or scope.

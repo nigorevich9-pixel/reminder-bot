@@ -1,8 +1,10 @@
 # Reminder Service — Status
 
-> Last reviewed: 2026-08-21.
-> Документ описывает **текущее** состояние проекта на VDS (systemd, актуальный код, поведение воркеров). Канонический обзор — в `PROJECT.md`, канонические сценарии — в `/root/core-orchestrator/SCENARIOS.md`.
-> Полный roadmap / backlog / known issues собраны в `ROADMAP.md` (см. также `/root/server-docs/docs/roadmap.md` для system-level).
+> Last reviewed: 2026-09-19 (docs / cross-repo alignment — **not** a live systemd re-probe).
+> Документ описывает **текущее** состояние проекта на VDS (systemd, актуальный код, поведение воркеров). Канонический обзор — в `PROJECT.md`, канонические сценарии — в [core-orchestrator/SCENARIOS.md](https://github.com/nigorevich9-pixel/core-orchestrator/blob/main/SCENARIOS.md).
+> Полный roadmap / backlog / known issues собраны в `ROADMAP.md` (см. также [server-docs/docs/roadmap.md](https://github.com/nigorevich9-pixel/server-docs/blob/main/docs/roadmap.md) для system-level; порядок harness — **docs/core**: P0 → P0.1 parallel transport → P0.2 baseline → P0.3 decision gates → remaining native P1).
+>
+> **Next practical step:** ops recheck `reminder-bot.service` (last verified down 2026-06-01). Restore нужен для **Telegram / end-user E2E**, не для core P0 replace E2E (Core Control / direct events). Затем safety [S]: help `/hold` = «остановить окончательно». UX (thin HITL, unified request, Telegram repo picker) — Later.
 
 ## Текущее состояние (snapshot)
 
@@ -10,14 +12,17 @@
 
 ### Сервисы (systemd, VDS)
 
-- `reminder-worker.service` — **active (running)**. Цикл `run_loop` опрашивает due-reminders и core-уведомления (включая BLOCKED) каждые `WORKER_POLL_SECONDS` (дефолт 5 сек).
-- `reminder-bot.service` — на 2026-06-01 в авто-рестарте, exit-code=1. Причина в `journalctl`: `aiogram.exceptions.TelegramNetworkError: Request timeout error` при `bot.get_me()` (не код, а сетевая проблема к `api.telegram.org`). Бот недоступен, но воркер уведомлений работает.
+Live systemd **не** перепроверялся в этом docs-review (2026-09-19). Ниже — last verified snapshot.
+
+- `reminder-worker.service` — last described **active (running)** (тот же ops snapshot). Цикл `run_loop` опрашивает due-reminders и core-уведомления (включая BLOCKED) каждые `WORKER_POLL_SECONDS` (дефолт 5 сек). Current live state needs ops recheck.
+- `reminder-bot.service` — **last verified down 2026-06-01** (авто-рестарт, exit-code=1). Причина в `journalctl`: `aiogram.exceptions.TelegramNetworkError: Request timeout error` при `bot.get_me()` (не код, а сетевая проблема к `api.telegram.org`). **Current live state needs ops recheck.** Это блокер только **Telegram / end-user E2E**; core P0 replace E2E идёт через Core Control / direct events и **не** ждёт живой бот. Воркер уведомлений от бота не зависит.
 - `jira-worker.service` — на 2026-06-01 в авто-рестарте, exit-code=0. Jira-интеграция **deprecated** (см. `PROJECT.md`), отказ ожидаем.
 
 ### Patch D / Patch E (актуально в коде)
 
 - Patch D (work plan UI в `/task`): read-only отображение latest `work_plan` snapshot (draft/approved/rejected-replan), статусы `work_items`, current `in_progress` item; для `NEEDS_USER_READ` — CTA `/run` и `/ask`. Scan последних 30 append-only snapshots (`CoreTasksRepository.get_recent_work_plan_details(limit=30)`), не full history.
 - Patch E (human NEEDS_REVIEW UI): CTA в `/task`, `/needs_review`, push-notify; `/ask` pre-check для `kind=question` (отдельно подсказывает `/run`); explicit «закрыть задачу» / «на доработку» wording.
+- B-markdown-checks (CHK): `/task` и NEEDS_REVIEW notify уже читают `task_details(kind=review_checks_summary)` + `review_check_result` (`app/utils/review_checks_display.py`). Это cheap UI consumer существующего контракта, **не** заблокирован на весь core P1.3: если rows нет — секция опускается.
 
 ### Fridge / Meal UI (в коде, в PROJECT.md)
 
@@ -28,7 +33,7 @@
 
 ## Текущее состояние (общее)
 
-- Бот и воркер работают на VDS (systemd). `reminder-worker` стабильно держится; `reminder-bot` сейчас падает на сетевых таймаутах к Telegram API.
+- Бот и воркер деплоятся на VDS (systemd). `reminder-worker` last described as stable; `reminder-bot` **last verified down 2026-06-01** на сетевых таймаутах к Telegram API — **current live state needs ops recheck**. Живой бот — блокер Telegram E2E, не harness P0.
 - Jira в коде присутствует, но для текущей системы считается **deprecated** (см. `PROJECT.md`). По умолчанию `jira-worker` не запускаем.
 - Репозиторий на GitHub: `nigorevich9-pixel/reminder-bot`
 - `users/reminders/jira_*` в `reminder_db` используются как базовые таблицы; core-оркестратор расширяет БД новыми таблицами (не ломая бота)
@@ -70,19 +75,20 @@
 
 ## Known issues
 
-- Help-текст `/hold` в `/start` вводит в заблуждение: написано «приостановить (пока логируем)», а в core это **терминальная** остановка (`STOPPED_BY_USER`) с отменой очереди/кодогена (см. `/root/core-orchestrator/EVENTS.md`).
+- Safety bug [S]: help-текст `/hold` в `/start` вводит в заблуждение: написано «приостановить (пока логируем)», а в core это **терминальная** остановка (`STOPPED_BY_USER`) с отменой очереди/кодогена (см. [core-orchestrator/EVENTS.md](https://github.com/nigorevich9-pixel/core-orchestrator/blob/main/EVENTS.md)). Пока pause/resume Later, текст обязан говорить «остановить окончательно».
 - Схема `events` создаётся "если не существует" — на некоторых окружениях это может конфликтовать с ручными изменениями.
 - Нотификатор должен быть устойчивым к отсутствию `chat_id` в raw_input (сейчас best-effort).
-- **`reminder-bot.service` сейчас не работает** (сетевые таймауты к Telegram API на 2026-06-01). Пока восстановлено не будет, входящие команды `/core`, `/fridge*`, `/meal` и т.п. не доставляются. Воркер уведомлений (`reminder-worker`) не зависит от бота и продолжает работать.
+- **`reminder-bot.service` last verified down 2026-06-01** (сетевые таймауты к Telegram API). **Current live state needs ops recheck.** Пока бот down, входящие команды `/core`, `/fridge*`, `/meal` не доставляются (блокер **Telegram / end-user E2E**). Core P0 replace E2E через Core Control / direct events от этого **не** зависит. Воркер уведомлений (`reminder-worker`) не зависит от бота.
 
 ## Осталось сделать (общие)
 
 - Персистентные таймзоны пользователей (если понадобится)
 - Доп. очистка/архивирование старых уведомлений
-- Выбор репозитория в `/core`: показывать доступные репо (ACL через `project_members`), и использовать `repo_id` в `tool_request` для `repo.*` инструментов (а `project_id` остаётся опциональной подсказкой/маппингом для codegen).
+- Выбор репозитория в `/core` (Telegram picker): показывать доступные репо (ACL через `project_members`), и использовать `repo_id` в `tool_request` для `repo.*` инструментов (а `project_id` остаётся опциональной подсказкой/маппингом для codegen). **Это UI-работа бота.** Core Control web уже поддерживает явный `repo_id` — это **не** означает, что Telegram picker реализован.
 - Unified request в `/core`: убрать split "Вопрос/Задача" в UI; отправлять один "request", классификацию/маршрут определяет `core-orchestrator` planner/policy.
+- Thin HITL (Later): внешние состояния Working / Needs Action / Done-Unread; approvals/links/summaries. Core [#106](https://github.com/nigorevich9-pixel/core-orchestrator/issues/106) operator inbox projection merged; [task-tracker-web](https://github.com/nigorevich9-pixel/task-tracker-web) endpoint — отдельный in-progress slice. Не заявлять интеграцию Pizza/Orca/Polide.
 - Priority / criticality: UX для выставления/отображения важности запроса (или хотя бы отображение policy core в `/task`).
-- UX: разделить pause vs stop для `/hold` (pause+resume и отдельный stop/cancel), см. `/root/server-docs/docs/roadmap.md`.
+- UX: разделить pause vs stop для `/hold` (pause+resume и отдельный stop/cancel), см. [server-docs/docs/roadmap.md](https://github.com/nigorevich9-pixel/server-docs/blob/main/docs/roadmap.md). Сейчас hold = terminal `STOPPED_BY_USER`.
 - UX: когда задача в `WAITING_USER` и бот просит ответить командой вида `/ask <task_id> <text>`, следующее сообщение пользователя автоматически трактовать как ответ для `/ask <task_id>` (без ввода `/ask <task_id>`).
 - Режим "просмотр задач" (list, filters) для удобства пользователя.
 - Rate-limit/anti-spam на создание задач.
@@ -92,6 +98,6 @@
 
 - `events` — shared inbox. В ней включены idempotency индексы (`source+external_id`, `payload_hash`).
 - Реализация в миграциях `reminder-bot`:
-  - table creation (clean installs): `/root/reminder-bot/alembic/versions/f5c3cd383f5b_denormalize_events_fields.py`
-  - idempotency indexes: `/root/reminder-bot/alembic/versions/20260204_0001_events_idempotency_indexes.py`
+  - table creation (clean installs): [`alembic/versions/f5c3cd383f5b_denormalize_events_fields.py`](alembic/versions/f5c3cd383f5b_denormalize_events_fields.py)
+  - idempotency indexes: [`alembic/versions/20260204_0001_events_idempotency_indexes.py`](alembic/versions/20260204_0001_events_idempotency_indexes.py)
 - `core-orchestrator` читает `events`, создаёт `tasks` и дальше ведёт pipeline через `llm_requests/llm_responses`.
